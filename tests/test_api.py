@@ -1,0 +1,130 @@
+"""Tests de l'API FastAPI — nécessitent MongoDB local (skippés sinon)."""
+
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+import pytest
+
+pytestmark = pytest.mark.mongo
+
+
+@pytest.fixture
+def client(mongo_available):
+    if not mongo_available:
+        pytest.skip("MongoDB local indisponible")
+    from fastapi.testclient import TestClient
+    from api.main import app
+    return TestClient(app)
+
+
+class TestRoot:
+    def test_root(self, client):
+        r = client.get("/")
+        assert r.status_code == 200
+        assert r.json()["message"] == "ImmoInsight TN API"
+
+    def test_health(self, client):
+        r = client.get("/health")
+        assert r.status_code == 200
+        assert r.json()["status"] == "ok"
+
+
+class TestAnnonces:
+    def test_liste(self, client):
+        r = client.get("/api/annonces/", params={"collection": "clean_vente", "limit": 5})
+        assert r.status_code == 200
+        data = r.json()
+        assert "data" in data
+        assert len(data["data"]) <= 5
+
+    def test_carte(self, client):
+        r = client.get("/api/annonces/carte", params={"collection": "clean_vente"})
+        assert r.status_code == 200
+        for item in r.json()["data"]:
+            assert "lat" in item and "lon" in item
+
+    def test_recentes(self, client):
+        r = client.get("/api/annonces/recentes")
+        assert r.status_code == 200
+
+
+class TestStats:
+    def test_globales(self, client):
+        r = client.get("/api/stats")
+        assert r.status_code == 200
+        j = r.json()
+        assert "collections" in j
+        assert "total_annonces" in j
+
+    def test_par_gouvernorat(self, client):
+        r = client.get("/api/stats/prix_par_gouvernorat", params={"collection": "clean_vente"})
+        assert r.status_code == 200
+        for item in r.json()["data"]:
+            assert "prix_moyen" in item
+
+    def test_par_ville(self, client):
+        r = client.get("/api/stats/prix_par_ville", params={"collection": "clean_estival"})
+        assert r.status_code == 200
+
+
+class TestEstimation:
+    def test_location(self, client):
+        r = client.get(
+            "/api/location/estimation",
+            params={"surface": 90, "ville": "La Marsa"},
+        )
+        assert r.status_code == 200
+        j = r.json()
+        assert j["statut"] == "succes"
+        assert "loyer_estime" in j
+        assert "prix_m2_reference" in j
+        assert j["intervalle_bas"] <= j["loyer_estime"] <= j["intervalle_haut"]
+
+    def test_location_sans_surface(self, client):
+        r = client.get(
+            "/api/location/estimation",
+            params={"nb_pieces": 3, "ville": "Tunis"},
+        )
+        assert r.status_code == 200
+        j = r.json()
+        assert j["statut"] == "succes"
+        assert j["loyer_estime"] > 0
+
+
+class TestROI:
+    def test_calculer(self, client):
+        r = client.get("/api/roi/calculer", params={"prix": 300000, "loyer_mensuel": 1500})
+        assert r.status_code == 200
+        j = r.json()
+        assert j["statut"] == "succes"
+        assert "score_roi" in j
+
+    def test_calculer_prix_invalide(self, client):
+        r = client.get("/api/roi/calculer", params={"prix": -5})
+        assert r.json()["statut"] == "erreur"
+
+    def test_top_zones(self, client):
+        r = client.get("/api/roi/top_zones", params={"limit": 3})
+        assert r.status_code == 200
+        data = r.json()["data"]
+        assert "data" in r.json()
+        assert all(item.get("zone_label") for item in data)
+        assert all(any(char.isalpha() for char in item["zone_label"]) for item in data)
+
+
+class TestFiabilite:
+    def test_liste(self, client):
+        r = client.get("/api/fiabilite/")
+        assert r.status_code == 200
+
+
+class TestAlertes:
+    def test_nouvelles(self, client):
+        r = client.get("/api/alertes/nouvelles")
+        assert r.status_code == 200
+
+    def test_prix(self, client):
+        r = client.get("/api/alertes/prix")
+        assert r.status_code == 200

@@ -1,0 +1,100 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.venv/
+venv/
+ENV/
+env/
+.venv/
+
+# Python - pytest
+.pytest_cache/
+.coverage
+htmlcov/
+*.cover
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# LaTeX
+*.aux
+*.log
+*.out
+*.toc
+*.pdf
+*.synctex.gz
+*.fls
+*.fdb_latexmk
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+.tmp_*
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+logs/
+
+# OS
+Desktop.ini
+
+# Frontend - Angular/Node
+frontend/node_modules/
+frontend/dist/
+frontend/.angular/
+frontend/*.log
+frontend/.env
+
+# Model artifacts (large files - consider using Git LFS or DVC instead)
+models/*/artifacts/*.pkl
+models/*/artifacts/*.joblib
+models/*/artifacts/*.h5
+models/*/artifacts/*.onnx
+
+# Data files (raw data, processed data - consider DVC)
+data/raw/
+data/processed/
+data/interim/
+data/external/
+*.csv
+*.parquet
+*.json
+*.geojson
+
+# Reports (generated)
+reports/*.json
+reports/*.html
+reports/*.png
+
+# Scrapers cache / output
+scrapers/cache/
+scrapers/output/
+scrapers/*.json
+
+# API
+api/__pycache__/
+api/.env
+
+# Test outputs
+tests/__pycache__/
+tests/.coverage

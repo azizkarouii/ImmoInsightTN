@@ -1,0 +1,751 @@
+\documentclass[12pt,a4paper]{report}
+\usepackage[french]{babel}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{geometry}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{caption}
+\usepackage{float}
+\usepackage{multicol}
+\usepackage{amsmath}
+
+\geometry{margin=2.5cm}
+
+\hypersetup{colorlinks=true,linkcolor=blue,urlcolor=blue}
+
+\definecolor{codebg}{rgb}{0.95,0.95,0.95}
+\lstset{
+    basicstyle=\ttfamily\small,
+    backgroundcolor=\color{codebg},
+    frame=single,
+    breaklines=true,
+    language=Python
+}
+
+\title{\textbf{ImmoInsight TN}\\ Platforme d'Intelligence Immobilière pour la Tunisie}
+\author{Mohamed Aziz Karoui}
+\date{Juillet 2026}
+
+\begin{document}
+
+\maketitle
+\tableofcontents
+\chapter*{Résumé Exécutif}
+\addcontentsline{toc}{chapter}{Résumé Exécutif}
+
+ImmoInsight TN est une plateforme complète d'intelligence immobilière dédiée au marché tunisien. Elle intègre la collecte automatisée de données via du web scraping (Mubawab.tn, Tayara.tn, Booking.com), un pipeline ETL complet (nettoyage, déduplication, géocodage, feature engineering), cinq modèles de machine learning (estimation de prix, détection de fraude, analyse NLP), une API REST FastAPI et un tableau de bord interactif Angular avec cartographie Leaflet.
+
+Ce rapport documente l'ensemble des travaux réalisés : architecture technique, choix d'implémentation, résultats des modèles, et perspectives d'évolution.
+
+\chapter{Introduction}
+
+\section{Contexte et Problématique}
+
+Le marché immobilier tunisien souffre d'un manque de transparence et d'outils d'analyse accessibles au grand public. Les acheteurs, vendeurs et investisseurs peinent à estimer la valeur réelle des biens en l'absence de données fiables et centralisées.
+
+ImmoInsight TN vise à combler ce vide en proposant :
+\begin{itemize}
+    \item Une collecte automatisée des annonces depuis les principales plateformes tunisiennes ;
+    \item Un pipeline de nettoyage et de normalisation des données ;
+    \item Des modèles de machine learning pour l'estimation de prix et la détection d'anomalies ;
+    \item Une interface web interactive pour visualiser et explorer les données ;
+    \item Un système d'alertes en temps réel sur les évolutions du marché.
+\end{itemize}
+
+\section{Périmètre du Projet}
+
+Le projet couvre trois segments du marché immobilier tunisien :
+\begin{itemize}
+    \item \textbf{Vente immobilière} : appartements, villas, maisons ;
+    \item \textbf{Location classique} : logements à louer à long terme ;
+    \item \textbf{Location estivale} : locations saisonnières, courte durée.
+\end{itemize}
+
+\section{Stack Technologique}
+
+\begin{itemize}
+    \item \textbf{Langage principal} : Python 3.13
+    \item \textbf{Scraping} : Scrapy, Playwright, Requests
+    \item \textbf{Base de données} : MongoDB 7.x (locale)
+    \item \textbf{Machine Learning} : scikit-learn, XGBoost, LightGBM, spaCy
+    \item \textbf{API} : FastAPI + Uvicorn
+    \item \textbf{Frontend} : Angular 17 (standalone components), Leaflet.js
+    \item \textbf{Système} : Windows 11, MiKTeX
+\end{itemize}
+
+\chapter{Architecture Globale}
+
+\section{Vue d'ensemble}
+
+L'architecture d'ImmoInsight TN est organisée en cinq couches principales :
+
+\begin{enumerate}
+    \item \textbf{Couche Collecte (scrapers/)} : Robots d'extraction de données depuis les sites immobiliers tunisiens et les API publiques (OSM).
+    \item \textbf{Couche ETL (etl/)} : Pipeline de nettoyage, déduplication, géocodage et enrichissement des données.
+    \item \textbf{Couche Modèles (models/)} : Cinq modèles de machine learning pour l'estimation, la fraude et le NLP.
+    \item \textbf{Couche API (api/)} : Interface REST FastAPI exposant les données et les prédictions.
+    \item \textbf{Couche Dashboard (frontend/)} : Application web Angular pour la visualisation interactive.
+\end{enumerate}
+
+\section{Diagramme des flux de données}
+
+Les données suivent le chemin suivant :
+
+\begin{verbatim}
+Sites web → Scrapers → MongoDB (raw_*) → ETL Cleaner
+→ ETL Dedup → ETL Geocoder → ETL Feature Engineer
+→ MongoDB (clean_*) ← Modèles ML → API FastAPI ← Angular Dashboard
+\end{verbatim}
+
+\section{Base de données MongoDB}
+
+La base \texttt{immoinsight} (locale, port 27017) contient les collections suivantes :
+
+\begin{longtable}{lll}
+\toprule
+\textbf{Collection} & \textbf{Documents} & \textbf{Description} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Collection} & \textbf{Documents} & \textbf{Description} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\texttt{raw\_vente} & 337 & Annonces brutes vente (Mubawab + Tayara) \\
+\texttt{raw\_location} & 6 & Annonces brutes location (Mubawab) \\
+\texttt{raw\_estival} & 195 & Annonces brutes location estivale (Booking + Mubawab) \\
+\texttt{clean\_vente} & 66 & Annonces vente nettoyées et dédupliquées \\
+\texttt{clean\_location} & 4 & Locations nettoyées (reprises en Juillet 2026) \\
+\texttt{clean\_estival} & 186 & Location estivale nettoyée \\
+\texttt{geodata\_poi} & $\sim$2400 & Points d'intérêt (14 villes, 8 catégories) \\
+\bottomrule
+\end{longtable}
+
+\chapter{Collecte de Données (Scrapers)}
+
+\section{Mubawab.tn — Scrapy}
+
+Le scraper \texttt{mubawab\_scraper.py} utilise Scrapy pour extraire les annonces depuis Mubawab.tn.
+
+\subsection{Spécifications techniques}
+\begin{itemize}
+    \item \textbf{Approche} : Scrapy Spider avec génération dynamique de 120 URL de départ (3 pages nationales + 13 villes $\times$ 9 sous-catégories).
+    \item \textbf{Structure actuelle} : Mubawab utilise désormais \texttt{/fr/sc/\{catégorie\}} (Tunisie entière) et \texttt{/fr/st/\{ville\}/\{catégorie\}} (par ville) — les anciennes URL \texttt{/fr/cc/\{cat\}/\{gov\}} renvoient 404.
+    \item \textbf{Pagination} : JSF/AJAX (POST) — non automatisable simplement, le premier écran fournit $\sim$35 annonces.
+    \item \textbf{Classification} : \texttt{type\_offre} propagé depuis l'URL de listing via \texttt{meta} Scrapy (plus fiable que les mots-clés dans l'URL de détail).
+    \item \textbf{Paramètres} : \texttt{CONCURRENT\_REQUESTS=6}, \texttt{DOWNLOAD\_DELAY=0.5}, \texttt{AUTOTHROTTLE} activé.
+    \item \textbf{Parsing} : Regex sur le HTML complet, prix via \texttt{span.priceTag} + regex de secours (\texttt{(\textbackslash d\{1,3\}(?:[\textbackslash s.,]\textbackslash d\{3\})+)\textbackslash s*(?:TND|DT)}).
+    \item \textbf{Équipements détectés} : 16 mots-clés (parking, ascenseur, piscine, etc.).
+    \item \textbf{Stockage} : \texttt{utils.upsert\_annonce()} vers MongoDB, déduplication par URL.
+    \item \textbf{Lancement par lots} : \texttt{python -m scrapers.main mubawab "tunis,ariana"} (scraping progressif).
+\end{itemize}
+
+\subsection{Extraction des caractéristiques}
+\begin{itemize}
+    \item Prix : extraction par regex, conversion en entier.
+    \item Surface : détection des patterns \texttt{X m²} ou \texttt{Xm2}.
+    \item Type de bien : détection par mots-clés dans le titre (appartement, villa, etc.).
+    \item Type d'offre : inféré depuis l'URL (\texttt{/vente/}, \texttt{/location/}).
+    \item Description : texte complet de l'annonce.
+\end{itemize}
+
+\section{Tayara.tn — Scrapy (Réécrit)}
+
+Le scraper \texttt{tayara\_scraper.py} a été initialement développé avec Playwright, puis réécrit en Scrapy pour tenter de contourner les blocages du serveur.
+
+\subsection{Caractéristiques}
+\begin{itemize}
+    \item \textbf{Spider} : \texttt{TayaraSpider}, extraction via \texttt{a[href*='/item/']}.
+    \item \textbf{Pagination} : Jusqu'à 15 pages.
+    \item \textbf{Parsing} : Regex sur le corps complet de la page (prix, surface, gouvernorat).
+    \item \textbf{Type de bien} : Inféré depuis le titre de l'annonce.
+\end{itemize}
+
+\paragraph{Statut :} Bloqué par le serveur de Tayara. Le spider est fonctionnel mais ne parvient pas à récupérer les données.
+
+\section{Booking.com — Playwright}
+
+Le scraper \texttt{booking\_scraper.py} utilise Playwright pour les locations estivales.
+
+\subsection{Spécifications}
+\begin{itemize}
+    \item \textbf{Portée} : 16 villes tunisiennes, 3 pages par ville.
+    \item \textbf{Extraction} : Prix par nuit, score d'avis, nombre d'évaluations, type de propriété.
+    \item \textbf{Moteur} : Playwright (Chrome headless), navigation asynchrone.
+\end{itemize}
+
+\section{Collecte POI — OpenStreetMap}
+
+Le collecteur \texttt{osm\_collector.py} utilise l'API Nominatim (et non Overpass comme initialement prévu).
+
+\subsection{Spécifications}
+\begin{itemize}
+    \item \textbf{API} : Nominatim (\texttt{https://nominatim.openstreetmap.org/search}).
+    \item \textbf{Portée} : 14 grandes villes tunisiennes avec bounding boxes.
+    \item \textbf{Catégories POI} : 8 types (plages, écoles, hôpitaux, transports, commerces, universités, pharmacies, restaurants).
+    \item \textbf{Déduplication} : Par \texttt{osm\_id} + \texttt{osm\_type}.
+\end{itemize}
+
+\section{Autres composants}
+
+\subsection{Change Detector}
+\texttt{change\_detector.py} (57 lignes) détecte les changements entre deux runs de scraping :
+\begin{itemize}
+    \item \texttt{detect\_removed\_listings()} — annonces disparues ;
+    \item \texttt{get\_new\_listings\_today()} — nouvelles annonces du jour ;
+    \item \texttt{get\_price\_changes\_today()} — variations de prix.
+\end{itemize}
+
+\subsection{Scheduler}
+\texttt{scheduler.py} (70 lignes) planifie les tâches via APScheduler (fuseau \texttt{Africa/Tunis}) :
+\begin{itemize}
+    \item Mubawab : lundi et jeudi à 2h00 ;
+    \item Tayara : mercredi à 2h00 ;
+    \item Afariat : mardi à 3h00 ;
+    \item Booking : quotidien à 6h00 ;
+    \item Dar Tunisia : vendredi à 4h00 ;
+    \item Inside Airbnb : 1er du mois à 5h00 ;
+    \item Rapport : quotidien à 8h00.
+\end{itemize}
+
+\subsection{Utils}
+\texttt{utils.py} (67 lignes) fournit les fonctions partagées : \texttt{get\_db()}, \texttt{clean\_prix()}, \texttt{clean\_surface()}, \texttt{compute\_hash()}, \texttt{upsert\_annonce()}.
+
+\subsection{CLI Orchestrateur}
+\texttt{main.py} (81 lignes) permet de lancer un scraper spécifique via :
+\begin{verbatim}
+python -m scrapers.main mubawab
+python -m scrapers.main booking
+python -m scrapers.main all
+\end{verbatim}
+
+\section{Sources bloquées ou abandonnées}
+
+\begin{longtable}{lll}
+\toprule
+\textbf{Source} & \textbf{Problème} & \textbf{Statut} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Source} & \textbf{Problème} & \textbf{Statut} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+Afariat.com & Cloudflare 522 & Bloqué \\
+Dar Tunisia & Domaine mort & Désactivé \\
+Inside Airbnb & Tunisie retirée du jeu de données & Désactivé \\
+Tecnocasa TN & Non implémenté & Abandonné \\
+Facebook Marketplace & Non implémenté & Abandonné \\
+INS / BCT & Non implémenté & Abandonné \\
+Tayara.tn & Blocage serveur & Bloqué (Scrapy en attente) \\
+\bottomrule
+\end{longtable}
+
+\chapter{Pipeline ETL}
+
+Le pipeline ETL est orchestré par \texttt{etl/pipeline.py} qui exécute séquentiellement quatre étapes.
+
+\section{Nettoyage (cleaner.py, 136 lignes)}
+
+\subsection{Fonctionnalités}
+\begin{itemize}
+    \item \textbf{Normalisation du type de bien} : \texttt{normalize\_type\_bien()} détecte le type via mots-clés dans le titre (appartement, villa, duplex, etc.).
+    \item \textbf{Filtre résidentiel} : Supprime les annonces de type \texttt{bureau}, \texttt{local\_commercial}, \texttt{terrain} pour les catégories vente/location.
+    \item \textbf{Filtre de prix} : Rejette les locations avec prix $< 100$ DT ou $> 10\,000$ DT (élimine les 33 raw\_location).
+    \item \textbf{Nettoyage des champs} : \texttt{prix} entier, \texttt{surface} entier ou null.
+    \item \textbf{Indexation} : Crée des indexes sur \texttt{url}, \texttt{gouvernorat}, \texttt{prix}, \texttt{surface}.
+\end{itemize}
+
+\section{Déduplication (deduplicator.py, 67 lignes)}
+
+\subsection{Méthode en deux passes}
+\begin{enumerate}
+    \item \textbf{Passe 1 — URL} : Supprime les doublons exacts par URL (conservation du premier insert).
+    \item \textbf{Passe 2 — MinHash LSH} : Compare les titres (shingles de 3 caractères, seuil de similarité à 0.85). Élimine 15 doublons de contenu similaire.
+\end{enumerate}
+
+\paragraph{Résultat :} 149 $\rightarrow$ 134 annonces vente après déduplication.
+
+\section{Géocodage (geocoder.py, 98 lignes)}
+
+\subsection{Changement de fournisseur}
+Initialement prévu avec Nominatim (rate-limit : 1 requête/sec), le géocodage utilise désormais \textbf{Photon API} (\texttt{https://photon.komoot.io/api}) qui ne limite pas le débit et offre une meilleure couverture.
+
+\subsection{Spécifications}
+\begin{itemize}
+    \item \textbf{Entrée} : Adresse composée de \{titre, gouvernorat, ville, description\}.
+    \item \textbf{Paramètre} : \texttt{bbox=7.0,30.0,12.0,38.0} (Tunisie).
+    \item \textbf{En-tête} : \texttt{User-Agent} requis (403 sans).
+    \item \textbf{Cache} : Dictionnaire mémoire pour éviter les appels redondants.
+    \item \textbf{Skip} : Ne traite pas les documents déjà géocodés (\texttt{lat}, \texttt{lon} présents).
+\end{itemize}
+
+\paragraph{Résultat :} 129/134 ventes géocodées (96\%), 193/193 estivales (100\%).
+
+\section{Feature Engineering (feature\_engineer.py, 129 lignes)}
+
+\subsection{POI distances}
+Utilisation de \texttt{scipy.spatial.cKDTree} (coordonnées converties en radians pour la distance sphérique) pour calculer la distance de chaque annonce aux 8 catégories POI :
+\[
+\mathrm{distance}_{\mathrm{POI}_i} = \min_{p \in \mathrm{POI}_i} \mathrm{haversine}(annonce, p)
+\]
+
+\subsection{Amenities binaires}
+9 indicateurs booléens : parking, ascenseur, piscine, gardien, jardin, terrasse, balcon, climatisation, meublé.
+
+\subsection{Autres features}
+\begin{itemize}
+    \item \texttt{\textbf{equipements\_str}} : Chaîne de caractères listant les équipements (à usage NLP).
+    \item \texttt{\textbf{gouvernorat\_freq}} : Fréquence relative du gouvernorat dans le dataset.
+\end{itemize}
+
+\paragraph{Stockage :} Les features sont écrites directement dans MongoDB via \texttt{\$set}.
+
+\chapter{Modèles de Machine Learning}
+
+\section{Modèle M1 — AVM Vente}
+
+\subsection{Objectif}
+Estimer le prix de vente d'un bien immobilier à partir de ses caractéristiques.
+
+\subsection{Données}
+77 échantillons (après filtrage des annonces sans surface).
+
+\subsection{Architecture}
+Empilement (stacking) de deux modèles de base avec un méta-modèle :
+
+\begin{itemize}
+    \item \textbf{XGBoost Regressor} : \texttt{n\_estimators=200}, \texttt{learning\_rate=0.05}, \texttt{max\_depth=5}.
+    \item \textbf{LightGBM Regressor} : \texttt{n\_estimators=200}, \texttt{learning\_rate=0.05}, \texttt{num\_leaves=31}.
+    \item \textbf{Méta-modèle} : \texttt{Ridge(alpha=1.0)} entraîné sur les prédictions OOF (out-of-fold) des deux modèles de base.
+\end{itemize}
+
+\subsection{Features}
+10 features numériques + encodage one-hot du type de bien :
+\begin{itemize}
+    \item \texttt{surface}, \texttt{pieces}, \texttt{age\_bien}, \texttt{score\_eco}
+    \item 5 distances POI (plage, école, hôpital, transport, commerce)
+    \item \texttt{prix\_m2\_moyen\_gouvernorat}
+    \item Types : \texttt{type\_appartement}, \texttt{type\_villa}
+\end{itemize}
+
+\subsection{Résultats}
+\begin{itemize}
+    \item \textbf{R²} : $\sim$0.09 (faible, dû à la petite taille de l'échantillon et à la qualité des données Tayara).
+    \item \textbf{Prédiction} : Retourne les prix estimés par XGBoost, LightGBM, et la moyenne pondérée.
+\end{itemize}
+
+\subsection{Limites}
+\begin{itemize}
+    \item 77 échantillons insuffisants pour un apprentissage robuste.
+    \item Données Tayara de qualité médiocre (prix concatenated, surfaces manquantes).
+    \item Pas d'interprétabilité SHAP (trop peu d'échantillons pour des insights significatifs).
+\end{itemize}
+
+\section{Modèle M2 — Estimation Loyer Classique}
+
+\subsection{Objectif}
+Estimer le loyer mensuel juste d'un bien en location longue durée.
+
+\subsection{Historique}
+Le dossier \texttt{models/m2\_loyer\_classique/} est resté vide : la collecte de locations réelles n'a produit aucune donnée exploitable pendant des mois (annonces Mubawab mal classées en vente). En Juillet 2026, le scraping Mubawab corrigé a fourni 6 annonces \texttt{raw\_location} réelles (4 après nettoyage), débloquant l'implémentation.
+
+\subsection{Données}
+4 annonces \texttt{clean\_location} avec prix et surface extraite (30 à 260 m²) : studio meublé 1500 DT, S1 Chotrana 1150 DT, 140 m² El Manar 1450 DT, duplex La Marsa 4900 DT.
+
+\subsection{Architecture : modèle par référence}
+Un modèle ML (RandomForest prévu au départ) n'est pas viable avec 4 échantillons. M2 utilise un \textbf{pricing par référence} avec cascade de résolution :
+
+\begin{enumerate}
+    \item \textbf{Référence mesurée par ville} : médiane prix/m² issue de \texttt{clean\_location} (La Marsa : 18,8 DT/m²).
+    \item \textbf{Référence marché manuelle} : 22 zones tunisiennes (La Marsa 18, Carthage 20, Tunis 12, Sousse 10, Sfax 8 DT/m²/mois...) — valeurs affinées à partir des données réelles et de la connaissance du marché.
+    \item \textbf{Quartier détecté dans le titre} : el manar, chotrana, marsa, kantaoui, etc.
+    \item \textbf{Référence par type de bien} mesurée, puis médiane globale.
+    \item \textbf{Fallback par pièce} si surface inconnue (studio 800, 2P 1000, 3P 1300, 4P+ 1600 DT).
+\end{enumerate}
+
+\subsection{Résultats}
+\begin{itemize}
+    \item Estimation avec intervalle ±15\%.
+    \item Précision : 2/4 annonces < 20\% d'erreur (El Manar +16\%, La Marsa 0\%).
+    \item Les 2 écarts restants sont des résidences meublées premium (My House, studio S0) hors distribution des références — limite assumée du jeu de données à 4 échantillons.
+\end{itemize}
+
+\subsection{Intégration}
+\begin{itemize}
+    \item \texttt{GET /api/location/estimation?surface=\&ville=\&type\_bien=\&nb\_pieces=} → \texttt{loyer\_estime}, \texttt{prix\_m2\_reference}, \texttt{intervalle\_bas/haut}.
+    \item Frontend : carte « Estimation de loyer mensuel (M2) » dans l'onglet Estimation, utilisable en entrée du calcul ROI.
+    \item Références stockées dans \texttt{artifacts/references.json} (régénérées par \texttt{train.py}).
+\end{itemize}
+
+\section{Modèle M2 — Loyer Classique (Non implémenté)}
+
+\paragraph{État :} Dossier \texttt{models/m2\_loyer\_classique/} vide. Non implémenté car \texttt{clean\_location} contient 0 documents (toutes les annonces de location Mubawab avaient des prix aberrants après parsing).
+
+\section{Modèle M3 — Pricing Estival Dynamique}
+
+\subsection{Changement d'approche}
+Le plan initial prévoyait une approche temporelle (Prophet pour la saisonnalité + LSTM pour le taux d'occupation). Faute de données temporelles suffisantes, une \textbf{régression XGBoost} sur features statiques a été implémentée.
+
+\subsection{Données}
+193 échantillons Booking.com.
+
+\subsection{Features}
+\begin{itemize}
+    \item \texttt{score\_avis} : Score d'avis normalisé.
+    \item \texttt{gouvernorat\_freq} : Fréquence du gouvernorat.
+    \item 8 distances POI (plage, école, hôpital, transport, commerce, université, pharmacie, restaurant).
+    \item Encodage one-hot de la ville (16 villes).
+\end{itemize}
+
+\subsection{Architecture}
+\begin{itemize}
+    \item \textbf{Modèle} : XGBoost Regressor, \texttt{n\_estimators=200}, \texttt{learning\_rate=0.05}.
+    \item \textbf{Prétraitement} : StandardScaler sur les features numériques.
+    \item \textbf{Validation} : Train/test split 80/20.
+\end{itemize}
+
+\subsection{Résultats}
+\begin{itemize}
+    \item \textbf{MAE} : 1436 DT (soit $\sim$22\% du prix moyen).
+    \item \textbf{RMSE} : 1960 DT.
+    \item \textbf{R²} : 0.58 (performance modérée, 58\% de variance expliquée).
+\end{itemize}
+
+\section{Modèle M4 — Détection de Fraude}
+
+\subsection{Approche}
+Isolation Forest (simplifiée par rapport au plan initial qui incluait un autoencoder TensorFlow).
+
+\subsection{Features}
+3 features uniquement (contre 5 prévues) :
+\begin{itemize}
+    \item \texttt{prix} : Prix total.
+    \item \texttt{surface} : Surface en m².
+    \item \texttt{dist\_transports\_km} : Distance au transport le plus proche.
+\end{itemize}
+
+\paragraph{Justification :} Les features \texttt{prix\_m2} et \texttt{gouvernorat\_freq} ont été retirées car \texttt{gouvernorat\_freq} n'était disponible que pour 17/134 annonces.
+
+\subsection{Paramètres}
+\begin{itemize}
+    \item \texttt{contamination=0.05} (5\% d'anomalies attendues).
+    \item \texttt{random\_state=42}.
+    \item StandardScaler pour la normalisation.
+\end{itemize}
+
+\subsection{Résultats}
+\begin{itemize}
+    \item \textbf{Anomalies détectées} : 7/134 (5.2\%).
+    \item \textbf{Score de fiabilité} (\texttt{fiabilite}) : Inversement proportionnel à l'anomaly score, stocké dans MongoDB.
+    \item \textbf{API} : \texttt{GET /api/fiabilite/} retourne le score par annonce, la liste des alertes.
+\end{itemize}
+
+\section{Modèle M5 — NLP Descriptions}
+
+\subsection{Changement d'approche}
+Le plan initial prévoyait un modèle CamemBERT fine-tuné pour la classification de standing. Par manque de GPU et de données labellisées, une \textbf{approche par règles et spaCy} a été adoptée.
+
+\subsection{Extraction de mots-clés}
+11 catégories de mots-clés détectés via \texttt{spaCy} (\texttt{fr\_core\_news\_md}) et pattern matching :
+
+\begin{multicols}{2}
+\begin{itemize}
+    \item \texttt{vue\_mer}
+    \item \texttt{renove}
+    \item \texttt{standing}
+    \item \texttt{proche\_plage}
+    \item \texttt{calme}
+    \item \texttt{lumineux}
+    \item \texttt{double\_vitrage}
+    \item \texttt{cuisine\_equipee}
+    \item \texttt{chauffage}
+    \item \texttt{securite}
+    \item \texttt{meuble}
+\end{itemize}
+\end{multicols}
+
+\subsection{Score de standing}
+Le standing est déterminé par un score de densité de mots-clés :
+\[
+\text{standing\_class} = 
+\begin{cases}
+\text{standing} & \text{si score } > 0.3 \\
+\text{moyen} & \text{si score } > 0.15 \\
+\text{standard} & \text{sinon}
+\end{cases}
+\]
+
+\subsection{Traitement}
+\begin{itemize}
+    \item Collections traitées : \texttt{clean\_vente} (134) + \texttt{clean\_estival} (193).
+    \item Stockage : Champs \texttt{nlp\_keywords} (liste) et \texttt{nlp\_standing} dans MongoDB.
+\end{itemize}
+
+\section{Score ROI Investisseur}
+
+Implémenté en Juillet 2026 dans \texttt{models/roi\_score/calculator.py} (les données locations récupérées ont permis de le débloquer).
+
+\subsection{Formules}
+\begin{itemize}
+    \item \textbf{Coût total d'acquisition} : $prix \times (1 + 5\% \text{ frais})$
+    \item \textbf{Revenu annuel} : $loyer_{mensuel} \times 12 + prix_{nuit} \times 90$ (90 nuits estivales)
+    \item \textbf{Rendement brut} : $revenu / coût \times 100$
+    \item \textbf{Rendement net} : $brut - 0.5\%$ (taxe foncière)
+    \item \textbf{Score ROI (0-100)} : rendement (0-50 pts) + revenu classique (25 pts) + revenu estival (25 pts)
+    \item \textbf{Labels} : excellent ($\geq$8\%), bon ($\geq$6\%), moyen ($\geq$4\%), faible, déficitaire
+\end{itemize}
+
+\subsection{Endpoints associés}
+\begin{itemize}
+    \item \texttt{GET /api/roi/calculer?prix=\&loyer\_mensuel=\&prix\_nuit=}
+    \item \texttt{GET /api/roi/top\_zones} — classement des zones par rendement (agrégation \texttt{clean\_vente} + prix moyens réels location/estival)
+    \item Intégré au dashboard Angular (onglet Estimation).
+\end{itemize}
+
+\chapter{API REST FastAPI}
+
+\section{Architecture}
+
+L'API est construite avec FastAPI et structurée en 6 routeurs pour un total de 23 endpoints :
+
+\begin{longtable}{ll}
+\toprule
+\textbf{Routeur} & \textbf{Endpoints} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Routeur} & \textbf{Endpoints} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\texttt{annonces} & \texttt{GET /api/annonces/} (liste paginée) \\
+ & \texttt{GET /api/annonces/carte} (données géo) \\
+ & \texttt{GET /api/annonces/recentes} (10 dernières) \\
+\texttt{estimation} & \texttt{GET /api/vente/estimation} (M1 via query params) \\
+ & \texttt{GET /api/estival/estimation} (M3) \\
+ & \texttt{GET /api/vente/prix\_m2/moyen} (prix/m² par gouvernorat) \\
+\texttt{stats} & \texttt{GET /api/stats} (global) \\
+ & \texttt{GET /api/stats?type=prix\_par\_gouvernorat} \\
+ & \texttt{GET /api/stats?type=prix\_par\_ville} \\
+\texttt{fiabilite} & \texttt{GET /api/fiabilite/} (liste complète) \\
+ & \texttt{GET /api/fiabilite/{annonce\_id}} (score individuel) \\
+ & \texttt{GET /api/fiabilite/alertes} (fiabilité faible) \\
+\texttt{alerte} & \texttt{GET /api/alertes/prix} (changements de prix) \\
+ & \texttt{GET /api/alertes/nouvelles} (nouvelles annonces) \\
+ & \texttt{GET /api/alertes/supprimees} (annonces supprimées) \\
+\texttt{roi} & \texttt{GET /api/roi/calculer} (ROI d'un bien) \\
+ & \texttt{GET /api/roi/top\_zones} (meilleures zones par rendement) \\
+\bottomrule
+\end{longtable}
+
+\section{Gestion des NaN}
+
+Un helper \texttt{clean\_doc()} (\texttt{api/\_\_init\_\_.py}) remplace récursivement les valeurs \texttt{NaN}, \texttt{Infinity} et \texttt{-Infinity} par \texttt{null} pour assurer la conformité JSON.
+
+\section{Démarrage}
+\begin{verbatim}
+uvicorn api.main:app --reload --port 8000
+\end{verbatim}
+
+\chapter{Tableau de Bord Angular}
+
+\section{Architecture Frontend}
+
+L'interface utilisateur est développée avec \textbf{Angular 17} en mode standalone (\texttt{bootstrapApplication}), sans NgModules.
+
+\subsection{Composants}
+
+\begin{longtable}{lll}
+\toprule
+\textbf{Composant} & \textbf{Rôle} & \textbf{Fonctionnalités} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Composant} & \textbf{Rôle} & \textbf{Fonctionnalités} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\texttt{app-root} & Navigation principale & Header avec logo + 4 onglets \\
+\texttt{map} & Visualisation cartographique & Leaflet, $\sim$400 marqueurs, popups \\
+\texttt{stats} & Statistiques & Cartes KPI, prix moyens, sources \\
+\texttt{estimation} & Estimateur de prix & Formulaire 8 champs, intervalle 90\% \\
+\texttt{alerts} & Alertes et fiabilité & 3 tabs (Nouvelles/Prix/Fiabilité) \\
+\bottomrule
+\end{longtable}
+
+\section{Système de Design}
+
+Le fichier \texttt{styles.scss} (280 lignes) implémente un design system complet :
+\begin{itemize}
+    \item \textbf{Couleur primaire} : \texttt{\#1a237e} (bleu foncé).
+    \item \textbf{Couleur d'accent} : \texttt{\#00bcd4} (cyan).
+    \item \textbf{Composants} : Cards avec ombres, badges, spinner, tableau responsive, formulaire grille.
+\end{itemize}
+
+\section{Carte Leaflet}
+
+\begin{itemize}
+    \item Centre : \texttt{[34.0, 9.5]}, zoom 7.
+    \item Deux modes de visualisation :
+    \begin{itemize}
+        \item \textbf{Marqueurs} : cercles colorés par \texttt{type\_bien} (appartement, villa, etc.), popups enrichis (prix, surface, pièces, gouvernorat, fiabilité, lien annonce).
+        \item \textbf{Heatmap de prix} (plugin \texttt{leaflet.heat}) : intensité = prix/m², gradient bleu → rouge, avec légende.
+    \end{itemize}
+\end{itemize}
+
+\section{Graphiques Chart.js (Juillet 2026)}
+
+Quatre graphiques ajoutés à l'onglet Stats via \texttt{chart.js@4.5} :
+\begin{itemize}
+    \item Barres — prix moyen par gouvernorat (vente) ;
+    \item Barres — prix par nuit et par ville (estival) ;
+    \item Doughnut — répartition des sources ;
+    \item Courbes — évolution des prix par annonce (via \texttt{price\_history}, historisé par le ChangeDetector).
+\end{itemize}
+
+\section{Calcul ROI (Juillet 2026)}
+
+L'onglet Estimation intègre désormais un calculateur de rentabilité : prix d'achat, loyer mensuel, prix par nuit estival et nuits/an → rendement net, temps de retour, score 0-100 et label qualitatif.
+
+\section{Build}
+\begin{verbatim}
+npx ng build  # → frontend/dist/frontend (385 kB)
+\end{verbatim}
+
+\section{Service API}
+
+\texttt{api.service.ts} (40 lignes) encapsule tous les appels HTTP vers le backend FastAPI :
+\begin{itemize}
+    \item \texttt{getAnnonces()}, \texttt{getAnnoncesCarte()}, \texttt{getAnnoncesRecentes()}
+    \item \texttt{estimerVente()}, \texttt{estimerEstival()}, \texttt{getPrixM2Moyen()}
+    \item \texttt{getStats()}, \texttt{getFiabilite()}, \texttt{getAlertes()}
+\end{itemize}
+
+\chapter{Tests Automatisés}
+
+Une suite de tests pytest a été ajoutée en Juillet 2026 (\texttt{tests/}).
+
+\section{Couverture}
+
+\begin{itemize}
+    \item \textbf{\texttt{test\_etl.py} — 29 tests unitaires} (exécution sans MongoDB) :
+    \begin{itemize}
+        \item \texttt{clean\_prix} : espaces insécables, virgules, suffixe \texttt{k}, \texttt{Prix à consulter}, NaN ;
+        \item \texttt{clean\_surface}, \texttt{normalize\_type\_bien} (NaN, mots-clés) ;
+        \item MinHash (similarité de textes), \texttt{haversine} (distance Tunis–Sfax) ;
+        \item \texttt{compute\_roi}, \texttt{score\_roi}, \texttt{label\_roi}.
+    \end{itemize}
+    \item \textbf{\texttt{test\_api.py} — 14 tests d'intégration} (FastAPI TestClient, skippés si MongoDB indisponible) : health, annonces (liste/carte/récentes), stats, ROI, fiabilité, alertes.
+\end{itemize}
+
+\section{Exécution}
+\begin{verbatim}
+python -m pytest tests          # 43 passed en ~2.6s
+\end{verbatim}
+
+\chapter{Résultats et Métriques}
+
+\section{Collecte de Données}
+
+\begin{longtable}{lrrr}
+\toprule
+\textbf{Source} & \textbf{Collection} & \textbf{Brut} & \textbf{Propre} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Source} & \textbf{Collection} & \textbf{Brut} & \textbf{Propre} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+Mubawab (vente) & \texttt{raw\_vente} & 212 & — \\
+Tayara (vente) & \texttt{raw\_vente} & 47 & — \\
+Booking (estival) & \texttt{raw\_estival} & 193 & 193 \\
+Mubawab (location) & \texttt{raw\_location} & 33 & 0 \\
+\bottomrule
+\end{longtable}
+
+\section{Performance des Modèles}
+
+\begin{longtable}{lccc}
+\toprule
+\textbf{Modèle} & \textbf{Métrique principale} & \textbf{Valeur} & \textbf{Échantillons} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Modèle} & \textbf{Métrique principale} & \textbf{Valeur} & \textbf{Échantillons} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+M1 — AVM Vente & R² & 0.09 & 77 \\
+M2 — Loyer & — & Non implémenté & 0 \\
+M3 — Estival & MAE & 1436 DT & 193 \\
+M3 — Estival & R² & 0.58 & 193 \\
+M4 — Fraude & Anomalies détectées & 7/134 (5.2\%) & 134 \\
+M5 — NLP & Catégories extraites & 11 & 327 \\
+\bottomrule
+\end{longtable}
+
+\section{Couverture Géographique}
+
+\begin{itemize}
+    \item \textbf{Gouvernorats couverts} : 25 gouvernorats tunisiens.
+    \item \textbf{Villes géocodées} : 14 villes avec données POI.
+    \item \textbf{Points d'intérêt} : $\sim$2400 POIs (8 catégories).
+\end{itemize}
+
+\chapter{Conclusion et Perspectives}
+
+\section{Bilan des Réalisations}
+
+ImmoInsight TN a atteint la plupart de ses objectifs fondamentaux :
+\begin{itemize}
+    \item Pipeline de scraping multi-sources fonctionnel (Mubawab, Booking, OSM).
+    \item Pipeline ETL robuste (nettoyage, déduplication, géocodage Photon, feature engineering).
+    \item Quatre modèles de machine learning déployés (M1, M3, M4, M5).
+    \item API REST complète avec 21 endpoints.
+    \item Tableau de bord Angular interactif avec cartographie.
+    \item Système d'alertes et de détection de changements.
+\end{itemize}
+
+\section{Limites Identifiées}
+
+\begin{itemize}
+    \item \textbf{Qualité et quantité des données} : Les blocages de scraping (Tayara, Afariat) limitent fortement le volume de données. Le modèle AVM (M1) souffre d'un échantillon trop faible (77).
+    \item \textbf{Modèles non implémentés} : M2 (loyer classique) et ROI score n'ont pu être développés faute de données.
+    \item \textbf{Absence de déploiement cloud} : La plateforme fonctionne uniquement en local. Docker Compose et le déploiement Railway/Render sont à finaliser.
+    \item \textbf{Interprétabilité} : SHAP n'a pas été intégré à M1 (échantillon insuffisant).
+\end{itemize}
+
+\section{Perspectives d'Évolution}
+
+\begin{enumerate}
+    \item \textbf{Contournement des blocages} : Utilisation de proxies, API payantes, ou partenariats avec les plateformes.
+    \item \textbf{Collecte de données temporelles} : Runs de scraping réguliers pour accumuler un historique et permettre Prophet/LSTM.
+    \item \textbf{Déploiement cloud} : Docker Compose + MongoDB Atlas + Railway/Render.
+    \item \textbf{Extension NLP} : Fine-tuning CamemBERT sur un jeu de données labellisées.
+    \item \textbf{Extension géographique} : Marchés Algérie, Maroc (MENA).
+    \item \textbf{Module investisseur} : Calcul ROI, rentabilité locative, scoring automatique.
+    \item \textbf{Mobile app} : Flutter ou React Native.
+    \item \textbf{Publication académique} : Article CRISP-DM complet décrivant la méthodologie et les résultats.
+\end{enumerate}
+
+\vspace{2cm}
+\begin{center}
+\rule{0.5\textwidth}{0.5pt}\\
+\textit{Rapport généré le \today}\\
+\textit{Projet ImmoInsight TN — Mohamed Aziz Karoui}
+\end{center}
+
+\end{document}

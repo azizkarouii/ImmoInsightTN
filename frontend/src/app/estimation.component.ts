@@ -118,8 +118,11 @@ import { CommonModule } from '@angular/common';
         <div class="result-price">
           {{ result.prix_estime | number:'1.0-0' }} TND
         </div>
+        <div class="result-range" *ngIf="!result.zone_reconnue && estimationForm.value.gouvernorat" style="color:#8a6d3b">
+          Zone « {{ estimationForm.value.gouvernorat }} » inconnue des données : estimation sans localisation.
+        </div>
         <div class="result-range">
-          Intervalle de confiance (90 %) :
+          Intervalle à 80 % (erreurs mesurées en validation croisée) :
           <strong>{{ result.intervalle_bas | number:'1.0-0' }}</strong> —
           <strong>{{ result.intervalle_haut | number:'1.0-0' }}</strong> TND
         </div>
@@ -201,20 +204,15 @@ import { CommonModule } from '@angular/common';
     <div class="card estimation-card" style="margin-top:20px">
       <h2>🌊 Estimation estivale</h2>
       <p style="color:var(--text-secondary);margin-bottom:20px;font-size:0.9rem">
-        Prix de nuit projeté à partir de la zone, du score avis et de l'accès plage.
+        Prix de nuit médian observé sur Booking dans la ville (logement entier), avec la fourchette des annonces.
       </p>
       <div class="form-grid">
         <div class="form-group">
           <label>Ville *</label>
-          <input type="text" [(ngModel)]="estivalForm.ville" placeholder="ex: Hammamet" />
-        </div>
-        <div class="form-group">
-          <label>Score avis</label>
-          <input type="number" [(ngModel)]="estivalForm.score_avis" placeholder="ex: 4.5" step="0.1" />
-        </div>
-        <div class="form-group">
-          <label>Distance plage (km)</label>
-          <input type="number" [(ngModel)]="estivalForm.dist_plages" placeholder="ex: 0.6" step="0.1" />
+          <select [(ngModel)]="estivalForm.ville">
+            <option value="">— Sélectionner —</option>
+            <option *ngFor="let v of estivalVilles" [value]="v">{{ v }}</option>
+          </select>
         </div>
       </div>
       <button class="btn btn-accent" (click)="estimateEstival()" [disabled]="estivalLoading || !estivalForm.ville">
@@ -228,7 +226,10 @@ import { CommonModule } from '@angular/common';
           {{ estivalResult.prix_nuit_estime | number:'1.0-0' }} TND / nuit
         </div>
         <div class="result-range">
-          Base modèle : <strong>{{ estivalResult.modele }}</strong>
+          Moitié centrale des annonces :
+          <strong>{{ estivalResult.intervalle_bas | number:'1.0-0' }}</strong> —
+          <strong>{{ estivalResult.intervalle_haut | number:'1.0-0' }}</strong> TND / nuit
+          ({{ estivalResult.nb_annonces }} annonces)
         </div>
       </div>
 
@@ -265,6 +266,9 @@ import { CommonModule } from '@angular/common';
         Calculer le ROI
       </button>
 
+      <div *ngIf="roiError" class="result-box" style="background:#fbe9e7">
+        <p style="color:#c62828">⚠️ {{ roiError }}</p>
+      </div>
       <div *ngIf="roiResult" class="result-box">
         <h3>Résultat ROI</h3>
         <div class="result-price">
@@ -436,6 +440,7 @@ export class EstimationComponent implements OnInit {
 
   roiForm = { prix: null as number | null, loyer_mensuel: null as number | null, prix_nuit: null as number | null, nuits_an: 90 };
   roiResult: any = null;
+  roiError: string | null = null;
   roiLoading = false;
 
   loyerForm = { surface: null as number | null, ville: '', type_bien: 'appartement', nb_pieces: null as number | null };
@@ -443,7 +448,8 @@ export class EstimationComponent implements OnInit {
   loyerError: string | null = null;
   loyerLoading = false;
 
-  estivalForm = { ville: '', score_avis: null as number | null, dist_plages: null as number | null };
+  estivalForm = { ville: '' };
+  estivalVilles: string[] = [];
   estivalResult: any = null;
   estivalError: string | null = null;
   estivalLoading = false;
@@ -453,7 +459,7 @@ export class EstimationComponent implements OnInit {
 
   constructor(private fb: FormBuilder, private http: HttpClient) {
     this.estimationForm = this.fb.group({
-      surface: ['', Validators.required],
+      surface: ['', [Validators.required, Validators.min(1)]],
       type_bien: [''],
       nb_pieces: [''],
       nb_chambres: [''],
@@ -466,6 +472,19 @@ export class EstimationComponent implements OnInit {
 
   ngOnInit(): void {
     this.loadTopZones();
+    this.http.get<any>('http://localhost:8000/api/estival/villes')
+      .subscribe({ next: res => this.estivalVilles = res.villes || [], error: () => this.estivalVilles = [] });
+  }
+
+  /** Message lisible depuis une erreur HTTP FastAPI (detail texte ou liste de validation). */
+  private apiError(err: any): string {
+    const detail = err?.error?.detail;
+    if (!err?.status) return 'Erreur de connexion au serveur';
+    if (typeof detail === 'string') return detail;
+    if (Array.isArray(detail) && detail.length) {
+      return detail.map((d: any) => `${(d.loc || []).slice(-1)[0]} : ${d.msg}`).join(' · ');
+    }
+    return `Erreur serveur (${err.status})`;
   }
 
   onSubmit(): void {
@@ -493,7 +512,7 @@ export class EstimationComponent implements OnInit {
           this.loading = false;
         },
         error: err => {
-          this.error = 'Erreur de connexion au serveur';
+          this.error = this.apiError(err);
           this.loading = false;
         }
       });
@@ -520,8 +539,8 @@ export class EstimationComponent implements OnInit {
           }
           this.loyerLoading = false;
         },
-        error: () => {
-          this.loyerError = 'Erreur de connexion au serveur';
+        error: err => {
+          this.loyerError = this.apiError(err);
           this.loyerLoading = false;
         }
       });
@@ -533,13 +552,7 @@ export class EstimationComponent implements OnInit {
     this.estivalResult = null;
     this.estivalError = null;
 
-    let params = new HttpParams().set('ville', this.estivalForm.ville);
-    if (this.estivalForm.score_avis !== null && this.estivalForm.score_avis !== undefined) {
-      params = params.set('score_avis', this.estivalForm.score_avis);
-    }
-    if (this.estivalForm.dist_plages !== null && this.estivalForm.dist_plages !== undefined) {
-      params = params.set('dist_plages', this.estivalForm.dist_plages);
-    }
+    const params = new HttpParams().set('ville', this.estivalForm.ville);
 
     this.http.get<any>('http://localhost:8000/api/estival/estimation', { params })
       .subscribe({
@@ -551,8 +564,8 @@ export class EstimationComponent implements OnInit {
           }
           this.estivalLoading = false;
         },
-        error: () => {
-          this.estivalError = 'Erreur de connexion au serveur';
+        error: err => {
+          this.estivalError = this.apiError(err);
           this.estivalLoading = false;
         }
       });
@@ -562,6 +575,7 @@ export class EstimationComponent implements OnInit {
     if (!this.roiForm.prix) return;
     this.roiLoading = true;
     this.roiResult = null;
+    this.roiError = null;
     let params = new HttpParams();
     params = params.set('prix', this.roiForm.prix);
     if (this.roiForm.loyer_mensuel) params = params.set('loyer_mensuel', this.roiForm.loyer_mensuel);
@@ -571,7 +585,7 @@ export class EstimationComponent implements OnInit {
     this.http.get<any>('http://localhost:8000/api/roi/calculer', { params })
       .subscribe({
         next: res => { this.roiResult = res; this.roiLoading = false; },
-        error: () => { this.roiResult = { statut: 'erreur', message: 'Erreur de connexion' }; this.roiLoading = false; }
+        error: err => { this.roiError = this.apiError(err); this.roiLoading = false; }
       });
   }
 

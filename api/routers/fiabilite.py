@@ -9,23 +9,6 @@ router = APIRouter()
 db = MongoClient(os.getenv("MONGO_URI", "mongodb://localhost:27017"))[os.getenv("MONGO_DB", "immoinsight")]
 
 
-@router.get("/{annonce_id}")
-def fiabilite_annonce(annonce_id: str):
-    from bson.objectid import ObjectId
-    try:
-        doc = db["clean_vente"].find_one({"_id": ObjectId(annonce_id)})
-        if not doc:
-            return {"statut": "erreur", "message": "Annonce non trouvee"}
-        return {
-            "statut": "succes",
-            "fiabilite": doc.get("fiabilite"),
-            "titre": doc.get("titre"),
-            "prix": doc.get("prix"),
-        }
-    except Exception:
-        return {"statut": "erreur", "message": "ID invalide"}
-
-
 @router.get("/")
 def liste_fiabilite(
     min_score: float = Query(0, ge=0, le=100),
@@ -56,3 +39,21 @@ def alertes_fiabilite(seuil: float = Query(30, le=100)):
     for d in docs:
         d["_id"] = str(d["_id"])
     return clean_doc({"total": len(docs), "seuil": seuil, "data": docs})
+
+
+# Déclarée en dernier : sinon "/alertes" serait capturé comme un annonce_id
+@router.get("/{annonce_id}")
+def fiabilite_annonce(annonce_id: str):
+    from bson.objectid import ObjectId
+    try:
+        doc = db["clean_vente"].find_one({"_id": ObjectId(annonce_id)})
+        if not doc:
+            return {"statut": "erreur", "message": "Annonce non trouvee"}
+        return {
+            "statut": "succes",
+            "fiabilite": doc.get("fiabilite"),
+            "titre": doc.get("titre"),
+            "prix": doc.get("prix"),
+        }
+    except Exception:
+        return {"statut": "erreur", "message": "ID invalide"}

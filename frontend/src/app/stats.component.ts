@@ -71,19 +71,19 @@ import Chart from 'chart.js/auto';
     <div class="charts-grid">
       <div class="card chart-card">
         <h3>Prix moyen par gouvernorat — Vente (TND)</h3>
-        <canvas #govCanvas></canvas>
+        <div class="chart-box"><canvas #govCanvas></canvas></div>
       </div>
       <div class="card chart-card">
         <h3>Prix / nuit par ville — Estival (TND)</h3>
-        <canvas #cityCanvas></canvas>
+        <div class="chart-box"><canvas #cityCanvas></canvas></div>
       </div>
       <div class="card chart-card">
         <h3>Sources des annonces</h3>
-        <canvas #srcCanvas></canvas>
+        <div class="chart-box"><canvas #srcCanvas></canvas></div>
       </div>
       <div class="card chart-card">
         <h3>Évolution des prix par ville (historique)</h3>
-        <canvas #histCanvas></canvas>
+        <div class="chart-box"><canvas #histCanvas></canvas></div>
         <p style="font-size:0.75rem;color:var(--text-light);margin-top:6px">
           Basé sur l'historique {{ historyCount }} annonces avec price_history
         </p>
@@ -107,6 +107,10 @@ export class StatsComponent implements OnInit, AfterViewInit {
   ngOnInit(): void {
     this.http.get<any>('http://localhost:8000/api/stats').subscribe(data => {
       this.stats = data;
+      this.collections = Object.keys(data?.collections || {}).map(key => ({
+        name: key,
+        ...data.collections[key]
+      }));
       if (this.srcCanvas && data?.sources) {
         this.renderSourceChart(data.sources);
       }
@@ -118,7 +122,7 @@ export class StatsComponent implements OnInit, AfterViewInit {
   }
 
   ngAfterViewInit(): void {
-    this.http.get<any>('http://localhost:8000/api/annonces/?limit=10&sort=-scraped_at')
+    this.http.get<any>('http://localhost:8000/api/annonces/?limit=10&sort=-scraped_at&with_history=true')
       .subscribe(res => this.renderHistChart(res.data));
     if (this.stats?.sources && this.srcCanvas) {
       this.renderSourceChart(this.stats.sources);
@@ -130,13 +134,10 @@ export class StatsComponent implements OnInit, AfterViewInit {
     this.chartInstances = [];
   }
 
-  get collections(): any[] {
-    if (!this.stats?.collections) return [];
-    return Object.keys(this.stats.collections).map(key => ({
-      name: key,
-      ...this.stats.collections[key]
-    }));
-  }
+  // Calculé une seule fois : un getter renvoyant de nouveaux objets à chaque
+  // détection de changements faisait reconstruire le *ngFor en boucle
+  // (re-layout -> resize Chart.js -> nouvelle détection), jusqu'au crash de l'onglet.
+  collections: any[] = [];
 
   labelForCollection(name: string): string {
     if (name === 'vente') return 'Vente';
@@ -250,9 +251,13 @@ export class StatsComponent implements OnInit, AfterViewInit {
 
   private renderChart(canvas: HTMLCanvasElement, type: any, data: any, options: any): void {
     if (!canvas) return;
-    this.chartInstances.forEach(chart => chart.destroy());
-    this.chartInstances = [];
-    const chart = new Chart(canvas, { type, data, options });
+    // Ne remplace que le graphique de ce canvas (détruire tous les graphiques
+    // ne laissait que le dernier rendu à l'écran)
+    Chart.getChart(canvas)?.destroy();
+    this.chartInstances = this.chartInstances.filter(chart => chart.canvas !== canvas);
+    // Hauteur fixée par .chart-box : sans maintainAspectRatio=false, le canvas
+    // responsive et son conteneur se redimensionnent mutuellement en boucle
+    const chart = new Chart(canvas, { type, data, options: { ...options, maintainAspectRatio: false } });
     this.chartInstances.push(chart);
   }
 }

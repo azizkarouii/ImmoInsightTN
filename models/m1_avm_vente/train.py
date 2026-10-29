@@ -1,5 +1,6 @@
 import os
 import json
+import unicodedata
 import joblib
 import numpy as np
 import pandas as pd
@@ -58,17 +59,23 @@ def prepare_features(df):
 
 
 def train_stacking(X, y, n_splits=5):
+    """y est en log1p(prix) : les métriques sont calculées en DT après expm1."""
     kf = KFold(n_splits=n_splits, shuffle=True, random_state=42)
     oof_xgb = np.zeros(len(X))
     oof_lgb = np.zeros(len(X))
     scores_mae, scores_r2 = [], []
 
-    params_xgb = {"n_estimators": 800, "max_depth": 7, "learning_rate": 0.05,
-                   "subsample": 0.8, "colsample_bytree": 0.8,
-                   "reg_alpha": 0.1, "random_state": 42, "verbosity": 0}
-    params_lgb = {"n_estimators": 800, "max_depth": 7, "learning_rate": 0.05,
-                   "subsample": 0.8, "feature_fraction": 0.8,
-                   "reg_alpha": 0.1, "random_state": 42, "verbose": -1}
+    # Arbres peu profonds et régularisés (une soixantaine d'annonces seulement) ;
+    # prix croissant avec la surface imposé par contrainte de monotonie
+    monotone = [1 if c == "surface" else 0 for c in X.columns]
+    params_xgb = {"n_estimators": 300, "max_depth": 3, "learning_rate": 0.05,
+                   "subsample": 0.8, "colsample_bytree": 0.8, "min_child_weight": 3,
+                   "reg_lambda": 5, "monotone_constraints": tuple(monotone),
+                   "random_state": 42, "verbosity": 0}
+    params_lgb = {"n_estimators": 300, "num_leaves": 7, "max_depth": 3, "learning_rate": 0.05,
+                   "subsample": 0.8, "subsample_freq": 1, "feature_fraction": 0.8,
+                   "min_child_samples": 5, "reg_lambda": 5, "monotone_constraints": monotone,
+                   "random_state": 42, "verbose": -1}
 
     for fold, (tr_idx, va_idx) in enumerate(kf.split(X)):
         X_tr, X_va = X.iloc[tr_idx], X.iloc[va_idx]
@@ -82,7 +89,7 @@ def train_stacking(X, y, n_splits=5):
         m_lgb.fit(X_tr, y_tr, eval_set=[(X_va, y_va)])
         oof_lgb[va_idx] = m_lgb.predict(X_va)
 
-        fold_mae = mean_absolute_error(y_va, oof_xgb[va_idx])
+        fold_mae = mean_absolute_error(np.expm1(y_va), np.expm1(oof_xgb[va_idx]))
         fold_r2 = r2_score(y_va, oof_xgb[va_idx])
         scores_mae.append(fold_mae)
         scores_r2.append(fold_r2)
@@ -100,16 +107,59 @@ def train_stacking(X, y, n_splits=5):
     meta.fit(stack_X, y)
 
     oof_stack = meta.predict(stack_X)
-    mae = mean_absolute_error(y, oof_stack)
+    mae = mean_absolute_error(np.expm1(y), np.expm1(oof_stack))
     r2 = r2_score(y, oof_stack)
 
     print(f"\n  [M1] Stacking final: MAE={mae:.0f} DT, R2={r2:.3f}")
     print(f"  [M1] Poids meta: XGB={meta.coef_[0]:.3f}, LGB={meta.coef_[1]:.3f}")
 
-    return final_xgb, final_lgb, meta, {"mae": mae, "r2": r2}
+    # Intervalle de prédiction empirique : quantiles du rapport réel / prédit hors échantillon
+    ratio = np.expm1(y) / np.expm1(oof_stack)
+    err = np.abs(np.expm1(oof_stack) - np.expm1(y)) / np.expm1(y)
+    metrics = {
+        "mae": mae, "r2_log": r2, "target_transform": "log1p",
+        "erreur_mediane_pct": round(float(np.median(err) * 100), 1),
+        "ratio_p10": round(float(np.percentile(ratio, 10)), 3),
+        "ratio_p90": round(float(np.percentile(ratio, 90)), 3),
+        "n": int(len(X)),
+    }
+    print(f"  [M1] Erreur mediane={metrics['erreur_mediane_pct']}%, "
+          f"intervalle 80%: x{metrics['ratio_p10']} - x{metrics['ratio_p90']}")
+    return final_xgb, final_lgb, meta, metrics
 
 
-def save_model(xgb_model, lgb_model, meta, metrics, feature_names):
+GEO_FEATURES = ["gouvernorat_freq", "dist_plages_km", "dist_ecoles_km",
+                "dist_hopitaux_km", "dist_transports_km", "dist_commerces_km"]
+
+
+def norm_zone(value):
+    text = unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode()
+    return " ".join(text.lower().replace("-", " ").split())
+
+
+def build_zone_profiles(df):
+    """Médianes des features géographiques par gouvernorat / ville.
+
+    À la prédiction, l'utilisateur ne fournit qu'une zone : sans ces profils,
+    la fréquence du gouvernorat et les distances POI restaient vides et le
+    modèle ignorait totalement la localisation.
+    """
+    profiles = {}
+    for field in ["gouvernorat", "ville"]:
+        if field not in df.columns:
+            continue
+        for zone, group in df.groupby(df[field].map(norm_zone)):
+            if not zone or zone in profiles:
+                continue
+            profiles[zone] = {
+                col: round(float(group[col].median()), 4)
+                for col in GEO_FEATURES
+                if col in group.columns and group[col].notna().any()
+            }
+    return profiles
+
+
+def save_model(xgb_model, lgb_model, meta, metrics, feature_names, zone_profiles=None):
     os.makedirs(MODEL_DIR, exist_ok=True)
     joblib.dump(xgb_model, os.path.join(MODEL_DIR, "xgb.pkl"))
     joblib.dump(lgb_model, os.path.join(MODEL_DIR, "lgb.pkl"))
@@ -118,6 +168,8 @@ def save_model(xgb_model, lgb_model, meta, metrics, feature_names):
         json.dump(feature_names, f)
     with open(os.path.join(MODEL_DIR, "metrics.json"), "w") as f:
         json.dump(metrics, f)
+    with open(os.path.join(MODEL_DIR, "zone_profiles.json"), "w", encoding="utf-8") as f:
+        json.dump(zone_profiles or {}, f, ensure_ascii=False, indent=1)
     print(f"  [M1] Modeles sauvegardes dans {MODEL_DIR}")
 
 
@@ -132,8 +184,9 @@ def run():
         print("  [M1] Pas assez de donnees pour l'entrainement")
         return
 
-    xgb_model, lgb_model, meta, metrics = train_stacking(X, y)
-    save_model(xgb_model, lgb_model, meta, metrics, list(X.columns))
+    # Cible log : distribution des prix très asymétrique, et évite les prix négatifs
+    xgb_model, lgb_model, meta, metrics = train_stacking(X, np.log1p(y))
+    save_model(xgb_model, lgb_model, meta, metrics, list(X.columns), build_zone_profiles(df))
 
     print("  [M1] Entrainement termine.\n")
 

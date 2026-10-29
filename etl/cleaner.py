@@ -86,9 +86,28 @@ def clean_text_field(val):
     if val is None or (isinstance(val, float) and np.isnan(val)):
         return None
     text = str(val).strip()
-    if not text or text.lower() == "nan":
+    if not text or text.lower() in ("nan", "none", "null"):
         return None
     return text
+
+
+def clean_titre(val):
+    text = clean_text_field(val)
+    if text is None:
+        return None
+    # Tayara suffixe ses titres de page par " | Tayara"
+    return re.sub(r"\s*[|\-]\s*Tayara\s*$", "", text, flags=re.IGNORECASE) or None
+
+
+SURFACE_MIN, SURFACE_MAX = 15, 2000
+
+
+RENTAL_TITLE_RE = re.compile(r"(?:\b[àa]\s+louer\b|\blocation\b)", re.IGNORECASE)
+
+
+def is_rental_title(titre):
+    """Annonce de location publiée dans une rubrique vente (fréquent sur Tayara)."""
+    return bool(titre) and bool(RENTAL_TITLE_RE.search(str(titre)))
 
 
 def bucket_value(value, bins, labels, default=None):
@@ -142,14 +161,20 @@ def clean_collection(collection_name):
 
     if "surface" in df.columns:
         df["surface"] = df["surface"].apply(clean_surface)
+        # Surfaces d'erreurs de scraping (1 m², 2935 m²...) : inconnues plutôt que fausses
+        df["surface"] = df["surface"].apply(
+            lambda v: v if v is not None and not pd.isna(v) and SURFACE_MIN <= v <= SURFACE_MAX else None
+        )
 
     # Titre manquant (booking stocke "nom")
     if "nom" in df.columns and ("titre" not in df.columns or df["titre"].isna().all()):
         df["titre"] = df["nom"]
 
-    for field in ["titre", "description", "ville", "gouvernorat", "adresse_brute", "source"]:
+    for field in ["titre", "description", "ville", "gouvernorat", "quartier", "adresse_brute", "source"]:
         if field in df.columns:
             df[field] = df[field].apply(clean_text_field)
+    if "titre" in df.columns:
+        df["titre"] = df["titre"].apply(clean_titre)
 
     if "titre" in df.columns:
         df["titre_len"] = df["titre"].fillna("").astype(str).str.len()
@@ -216,6 +241,12 @@ def clean_collection(collection_name):
         df = df[df["type_bien"].isin(residential)]
         print(f"  [CLEAN] {before - len(df)} non-residentiels supprimes")
 
+    # Les locations mal classées faussent les prix de vente (loyers de 10 000 DT...)
+    if "vente" in collection_name and "titre" in df.columns:
+        before = len(df)
+        df = df[~df["titre"].apply(is_rental_title)]
+        print(f"  [CLEAN] {before - len(df)} locations retirees de {collection_name}")
+
     # Filter outliers for vente
     if "vente" in collection_name:
         df = df[(df["prix"].isna()) | ((df["prix"] >= 10000) & (df["prix"] <= 5000000))]
@@ -237,6 +268,10 @@ def save_clean(df, clean_name):
     records = df.to_dict("records")
     for r in records:
         r.pop("_id", None)
+        # NaN pandas -> null Mongo (sinon "nan" est relu comme texte, ex. par le géocodeur)
+        for k, v in r.items():
+            if isinstance(v, float) and np.isnan(v):
+                r[k] = None
     col.insert_many(records)
     col.create_index([("url", ASCENDING)], unique=True)
     if "lat" in df.columns:

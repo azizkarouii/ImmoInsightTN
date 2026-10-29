@@ -17,6 +17,11 @@ def load_data():
     return docs
 
 
+# Une médiane mesurée sur moins d'annonces n'est pas utilisée comme référence :
+# avec 3-4 locations, un seul studio meublé suffit à fausser la valeur
+MIN_ECHANTILLONS = 10
+
+
 def build_references(docs):
     refs = {"par_ville": {}, "par_type": {}, "global": [], "par_piece": []}
     for d in docs:
@@ -25,16 +30,22 @@ def build_references(docs):
             continue
         prix_m2 = prix / surface
         refs["global"].append(prix_m2)
-        ville = d.get("ville") or "Inconnu"
-        refs["par_ville"].setdefault(ville, []).append(prix_m2)
+        ville = d.get("ville")
+        if ville and isinstance(ville, str):
+            refs["par_ville"].setdefault(ville, []).append(prix_m2)
         type_bien = d.get("type_bien") or "appartement"
         refs["par_type"].setdefault(type_bien, []).append(prix_m2)
         if d.get("nb_pieces"):
             refs["par_piece"].append((prix, d["nb_pieces"]))
     for k in ["par_ville", "par_type"]:
-        for zone, vals in refs[k].items():
-            refs[k][zone] = statistics.median(vals)
-    refs["prix_m2_mediane"] = statistics.median(refs["global"]) if refs["global"] else None
+        refs[k] = {
+            zone: statistics.median(vals)
+            for zone, vals in refs[k].items()
+            if len(vals) >= MIN_ECHANTILLONS
+        }
+    refs["prix_m2_mediane"] = (
+        statistics.median(refs["global"]) if len(refs["global"]) >= MIN_ECHANTILLONS else None
+    )
     refs["n"] = len(refs["global"])
     return refs
 
@@ -55,7 +66,8 @@ def run():
         json.dump(refs, f, ensure_ascii=False, indent=2)
 
     print(f"  [M2] {refs['n']} echantillons avec surface")
-    print(f"  [M2] Prix/m2 median global: {refs['prix_m2_mediane']:.1f} DT")
+    if refs["prix_m2_mediane"]:
+        print(f"  [M2] Prix/m2 median global: {refs['prix_m2_mediane']:.1f} DT")
     for zone, val in sorted(refs["par_ville"].items()):
         print(f"  [M2]   {zone}: {val:.1f} DT/m2")
     print(f"  [M2] References sauvegardees dans {MODEL_DIR}")

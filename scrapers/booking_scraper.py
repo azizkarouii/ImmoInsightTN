@@ -1,6 +1,7 @@
 import asyncio
 import random
 from datetime import datetime, timedelta
+from urllib.parse import urljoin
 from .utils import get_db, clean_prix, upsert_annonce
 
 async def scrape_booking():
@@ -37,6 +38,8 @@ async def scrape_booking():
 
         checkin = (datetime.now() + timedelta(days=7)).strftime('%Y-%m-%d')
         checkout = (datetime.now() + timedelta(days=14)).strftime('%Y-%m-%d')
+        # Booking affiche le prix TOTAL du séjour recherché, pas le prix par nuit
+        nb_nuits = (datetime.strptime(checkout, '%Y-%m-%d') - datetime.strptime(checkin, '%Y-%m-%d')).days
 
         for ville in VILLES:
             print(f"[BOOKING] Scraping {ville}...")
@@ -72,14 +75,18 @@ async def scrape_booking():
                             loc   = await loc_el.inner_text()   if loc_el   else None
                             lien  = await lien_el.get_attribute("href") if lien_el else None
 
-                            prix_num = clean_prix(prix)
+                            prix_sejour = clean_prix(prix)
+                            prix_num = round(prix_sejour / nb_nuits) if prix_sejour else None
 
                             item = {
                                 "source":         "booking",
-                                "url":            f"https://www.booking.com{lien}" if lien else None,
+                                # href peut être relatif ou déjà absolu
+                                "url":            urljoin("https://www.booking.com", lien) if lien else None,
                                 "nom":            nom,
                                 "ville":          ville,
                                 "prix_nuit":      prix_num,
+                                "prix_sejour":    prix_sejour,
+                                "nb_nuits":       nb_nuits,
                                 "score_avis":     score,
                                 "localisation":   loc,
                                 "type_offre":     "location_estivale",

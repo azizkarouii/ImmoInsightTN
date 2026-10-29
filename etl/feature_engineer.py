@@ -11,6 +11,13 @@ load_dotenv()
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
 MONGO_DB  = os.getenv("MONGO_DB", "immoinsight")
 
+POI_TYPES = ["plages", "ecoles", "universites", "hopitaux",
+             "commerces", "pharmacies", "restaurants", "transports"]
+GEO_FEATURES = [f"dist_{t}_km" for t in POI_TYPES] + [
+    "nearest_poi_km", "accessibilite_score", "poi_count_5km",
+    "mean_poi_distance_km", "proximite_score",
+]
+
 def get_db():
     return MongoClient(MONGO_URI)[MONGO_DB]
 
@@ -185,11 +192,16 @@ def engineer_features(clean_name):
                 val = val.item()
             update[col] = val
 
-        if update:
-            db[clean_name].update_one(
-                {"_id": row["_id"]},
-                {"$set": update},
-            )
+        # Sans coordonnées, les features géographiques d'un run précédent sont obsolètes
+        unset = {}
+        if pd.isna(row.get("lat")) or pd.isna(row.get("lon")):
+            unset = {col: "" for col in GEO_FEATURES if col not in update}
+
+        if update or unset:
+            ops = {"$set": update} if update else {}
+            if unset:
+                ops["$unset"] = unset
+            db[clean_name].update_one({"_id": row["_id"]}, ops)
             updated += 1
 
     print(f"  [FEAT] {clean_name}: {updated} annonces enrichies")

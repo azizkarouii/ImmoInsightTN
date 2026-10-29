@@ -39,6 +39,28 @@ class TestAnnonces:
         assert "data" in data
         assert len(data["data"]) <= 5
 
+    def test_sanitize_map_points_filters_without_moving_points(self):
+        from api.routers.annonces import sanitize_map_points
+
+        docs = [
+            {"lat": 36.8, "lon": 10.18},
+            {"lat": 36.8, "lon": 10.18},
+            {"lat": "35.8", "lon": "10.6"},
+            {"lat": None, "lon": 10.0},
+            {"lat": float("nan"), "lon": 10.0},
+            {"lat": 45.0, "lon": 2.0},
+        ]
+
+        cleaned = sanitize_map_points(docs)
+
+        assert [(d["lat"], d["lon"]) for d in cleaned] == [(36.8, 10.18), (36.8, 10.18), (35.8, 10.6)]
+
+    def test_fix_url_removes_doubled_booking_prefix(self):
+        from api.routers.annonces import fix_url
+
+        assert fix_url("https://www.booking.comhttps://www.booking.com/hotel/tn/x.html") ==             "https://www.booking.com/hotel/tn/x.html"
+        assert fix_url("https://www.tayara.tn/item/a?next=https://x.tn") == "https://www.tayara.tn/item/a?next=https://x.tn"
+
     def test_carte(self, client):
         r = client.get("/api/annonces/carte", params={"collection": "clean_vente"})
         assert r.status_code == 200
@@ -93,6 +115,49 @@ class TestEstimation:
         assert j["loyer_estime"] > 0
 
 
+    def test_location_surface_invalide(self, client):
+        r = client.get("/api/location/estimation", params={"surface": -10, "ville": "Tunis"})
+        assert r.status_code == 422
+
+    def test_location_ville_inconnue_pas_plus_chere_que_la_marsa(self, client):
+        inconnue = client.get("/api/location/estimation", params={"surface": 90, "ville": "Kasserine"}).json()
+        marsa = client.get("/api/location/estimation", params={"surface": 90, "ville": "La Marsa"}).json()
+        assert inconnue["loyer_estime"] < marsa["loyer_estime"]
+
+    def test_vente_surface_invalide(self, client):
+        assert client.get("/api/vente/estimation", params={"surface": 0}).status_code == 422
+
+    def test_vente_prix_croissant_avec_surface(self, client):
+        prix = [
+            client.get("/api/vente/estimation", params={"surface": s, "gouvernorat": "Tunis"}).json()["prix_estime"]
+            for s in [50, 100, 200, 400]
+        ]
+        assert prix == sorted(prix)
+        assert all(p > 0 for p in prix)
+
+    def test_vente_zone_utilisee(self, client):
+        j = client.get("/api/vente/estimation", params={"surface": 100, "gouvernorat": "Sousse"}).json()
+        assert j["zone_reconnue"] == "sousse"
+        assert j["intervalle_bas"] < j["prix_estime"] < j["intervalle_haut"]
+
+    def test_estival_par_ville(self, client):
+        villes = client.get("/api/estival/villes").json()["villes"]
+        assert "Hammamet" in villes
+        prix = {v: client.get("/api/estival/estimation", params={"ville": v}).json()["prix_nuit_estime"] for v in villes}
+        assert len(set(prix.values())) > 1  # la ville influence le prix
+        assert all(30 < p < 2000 for p in prix.values())  # prix par nuit, pas par séjour
+
+    def test_estival_ville_insensible_casse(self, client):
+        a = client.get("/api/estival/estimation", params={"ville": "hammamet"}).json()
+        b = client.get("/api/estival/estimation", params={"ville": "Hammamet"}).json()
+        assert a["prix_nuit_estime"] == b["prix_nuit_estime"]
+
+    def test_estival_ville_inconnue(self, client):
+        r = client.get("/api/estival/estimation", params={"ville": "Kairouan"})
+        assert r.status_code == 422
+        assert "Hammamet" in r.json()["detail"]
+
+
 class TestROI:
     def test_calculer(self, client):
         r = client.get("/api/roi/calculer", params={"prix": 300000, "loyer_mensuel": 1500})
@@ -103,7 +168,7 @@ class TestROI:
 
     def test_calculer_prix_invalide(self, client):
         r = client.get("/api/roi/calculer", params={"prix": -5})
-        assert r.json()["statut"] == "erreur"
+        assert r.status_code == 422
 
     def test_top_zones(self, client):
         r = client.get("/api/roi/top_zones", params={"limit": 3})

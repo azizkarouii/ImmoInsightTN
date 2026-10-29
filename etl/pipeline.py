@@ -17,6 +17,10 @@ def run_pipeline():
     run_geocoder()
     run_features()
 
+    # Scores de fiabilité (M4) : dépendent des prix et distances qui viennent d'être recalculés
+    from models.m4_fraude.train import run as run_fiabilite
+    run_fiabilite()
+
     # Bilan final
     from pymongo import MongoClient
     from dotenv import load_dotenv

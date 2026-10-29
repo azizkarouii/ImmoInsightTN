@@ -25,10 +25,11 @@ def load_data():
 
 
 def prepare_features(df):
-    X = df[FRAUD_FEATURES].copy()
-    X = X.fillna(X.median(numeric_only=True))
+    X = df[FRAUD_FEATURES].apply(pd.to_numeric, errors="coerce")
+    medians = X.median()
+    X = X.fillna(medians)
     print(f"  [M4] {len(X)} echantillons, {len(X.columns)} features")
-    return X, df.index
+    return X, df["_id"], medians
 
 
 def train_model(X):
@@ -64,14 +65,14 @@ def save_model(iso, scaler, fiabilite, metrics):
     print(f"  [M4] Modele sauvegarde dans {MODEL_DIR}")
 
 
-def save_fiabilite(df_idx, fiabilite):
+def save_fiabilite(ids, fiabilite):
+    # Mise à jour par _id (l'ancienne version ré-interrogeait la collection et
+    # associait les scores par position, sans garantie d'ordre)
     db = MongoClient(MONGO_URI)[MONGO_DB]
-    docs = list(db["clean_vente"].find({}))
-    for i, idx in enumerate(df_idx):
-        doc = docs[idx]
+    for _id, score in zip(ids, fiabilite):
         db["clean_vente"].update_one(
-            {"_id": doc["_id"]},
-            {"$set": {"fiabilite": round(float(fiabilite[i]), 1)}}
+            {"_id": _id},
+            {"$set": {"fiabilite": round(float(score), 1)}}
         )
     print(f"  [M4] Scores fiabilite sauvegardes dans clean_vente")
 
@@ -82,7 +83,7 @@ def run():
     print("=" * 50)
 
     df = load_data()
-    X, idx = prepare_features(df)
+    X, ids, medians = prepare_features(df)
     if len(X) < 10:
         print("  [M4] Pas assez de donnees")
         return
@@ -93,8 +94,12 @@ def run():
         "n_features": len(FRAUD_FEATURES),
         "contamination": 0.05,
         "fiabilite_mean": round(float(fiabilite.mean()), 1),
+        # Valeurs de remplacement des features manquantes, réutilisées à la prédiction
+        "medians": {k: float(v) for k, v in medians.items()},
+        "score_min": float(iso.score_samples(scaler.transform(X)).min()),
+        "score_max": float(iso.score_samples(scaler.transform(X)).max()),
     })
-    save_fiabilite(idx, fiabilite)
+    save_fiabilite(ids, fiabilite)
     print("  [M4] Entrainement termine.\n")
 
 

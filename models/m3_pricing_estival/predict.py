@@ -1,8 +1,6 @@
 import os
 import json
-import joblib
-import numpy as np
-import pandas as pd
+import unicodedata
 from pymongo import MongoClient
 from dotenv import load_dotenv
 
@@ -11,31 +9,50 @@ MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
 MONGO_DB = os.getenv("MONGO_DB", "immoinsight")
 MODEL_DIR = os.path.join(os.path.dirname(__file__), "artifacts")
 
+ALIAS_VILLES = {
+    "jerba": "djerba",
+    "marsa": "la marsa",
+    "houmt souk": "djerba",
+    "yasmine hammamet": "hammamet",
+}
+
+
+class VilleInconnue(ValueError):
+    """La ville demandée n'a pas de référence estivale."""
+
+
+def _norm(text):
+    text = unicodedata.normalize("NFKD", str(text or "")).encode("ascii", "ignore").decode()
+    return " ".join(text.lower().replace("-", " ").split())
+
 
 def load_model():
-    model = joblib.load(os.path.join(MODEL_DIR, "model.pkl"))
-    scaler = joblib.load(os.path.join(MODEL_DIR, "scaler.pkl"))
-    with open(os.path.join(MODEL_DIR, "features.json")) as f:
-        features = json.load(f)
-    return model, scaler, features
+    with open(os.path.join(MODEL_DIR, "references.json"), encoding="utf-8") as f:
+        return json.load(f)
 
 
-def predict_one(ville, score_avis=None, dist_plages=None):
-    model, scaler, feature_names = load_model()
+def villes_couvertes():
+    return sorted(load_model()["par_ville"])
 
-    row = {f: np.nan for f in feature_names}
-    row["score_avis"] = score_avis or 7.0
-    row["ville_" + ville] = 1.0
 
-    row_df = pd.DataFrame([row])
-    row_df = row_df.fillna(row_df.median(numeric_only=True))
-    row_df = scaler.transform(row_df)
-
-    prix = model.predict(row_df)[0]
+def predict_one(ville):
+    refs = load_model()
+    par_ville = {_norm(v): v for v in refs["par_ville"]}
+    key = _norm(ville)
+    key = ALIAS_VILLES.get(key, key)
+    if key not in par_ville:
+        raise VilleInconnue(
+            f"Ville '{ville}' non couverte. Villes disponibles : {', '.join(sorted(refs['par_ville']))}"
+        )
+    ref = refs["par_ville"][par_ville[key]]
     return {
-        "prix_nuit_estime": round(float(prix), 2),
-        "intervalle_bas": round(float(prix * 0.85), 2),
-        "intervalle_haut": round(float(prix * 1.15), 2),
+        "ville": par_ville[key],
+        "prix_nuit_estime": ref["median"],
+        # Intervalle = moitié centrale des annonces observées (P25-P75)
+        "intervalle_bas": ref["p25"],
+        "intervalle_haut": ref["p75"],
+        "nb_annonces": ref["n"],
+        "modele": "M3-reference-ville",
     }
 
 
@@ -50,15 +67,14 @@ def run():
 
     total, nb_precis = 0, 0
     for doc in docs:
-        result = predict_one(
-            doc.get("ville", ""),
-            doc.get("score_avis"),
-        )
+        try:
+            result = predict_one(doc.get("ville", ""))
+        except VilleInconnue:
+            continue
         reel = doc.get("prix")
-        erreur = abs(result["prix_nuit_estime"] - reel) / reel * 100 if reel else None
-        if erreur is not None:
+        if reel:
             total += 1
-            if erreur < 15:
+            if abs(result["prix_nuit_estime"] - reel) / reel * 100 < 15:
                 nb_precis += 1
 
     if total:

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 import os
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -25,16 +25,13 @@ def _sanitize_label(value):
 
 @router.get("/roi/calculer")
 def calculer_roi(
-    prix: float = Query(...),
-    loyer_mensuel: float = Query(None),
-    prix_nuit: float = Query(None),
+    prix: float = Query(..., gt=0),
+    loyer_mensuel: float = Query(None, ge=0),
+    prix_nuit: float = Query(None, ge=0),
     nuits_an: int = Query(90, ge=1, le=365),
 ):
-    try:
-        from models.roi_score.calculator import compute_roi
-        return compute_roi(prix, loyer_mensuel=loyer_mensuel, prix_nuit=prix_nuit, nuits_an=nuits_an)
-    except Exception as e:
-        return {"statut": "erreur", "message": str(e)}
+    from models.roi_score.calculator import compute_roi
+    return compute_roi(prix, loyer_mensuel=loyer_mensuel, prix_nuit=prix_nuit, nuits_an=nuits_an)
 
 
 @router.get("/roi/top_zones")
@@ -53,4 +50,4 @@ def top_zones(limit: int = Query(10, ge=1, le=50)):
             cleaned.append(z)
         return {"data": cleaned}
     except Exception as e:
-        return {"statut": "erreur", "message": str(e)}
+        raise HTTPException(status_code=500, detail=f"Calcul des zones impossible: {e}")

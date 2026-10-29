@@ -79,6 +79,11 @@ data/external/
 *.csv
 *.parquet
 *.json
+# ...sauf la configuration du frontend, indispensable pour builder un clone
+!frontend/package.json
+!frontend/package-lock.json
+!frontend/angular.json
+!frontend/tsconfig*.json
 *.geojson
 
 # Reports (generated)

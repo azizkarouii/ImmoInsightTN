@@ -1,5 +1,7 @@
 import os
+import re
 import json
+import statistics
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -70,63 +72,70 @@ def _charger_references():
     return {}
 
 
+def _contient(texte, zone):
+    """Correspondance sur mots entiers : 'tunisie' ne doit pas matcher 'tunis'."""
+    return re.search(rf"\b{re.escape(zone)}\b", texte) is not None
+
+
 def _ville_depuis_titre(titre):
     if not titre:
         return None
     t = titre.lower()
     for key, ville in QUARTIER_MAP.items():
-        if key in t:
+        if _contient(t, key):
             return ville
     return None
 
 
-def _prix_m2_pour(annonce, refs):
-    ville = (annonce.get("ville") or "").strip().lower()
-    titre = annonce.get("titre") or ""
+# Repli quand la zone est inconnue : médiane des références marché, plutôt qu'une
+# valeur mesurée sur une ou deux annonces (un studio meublé à 50 DT/m² rendait
+# une ville inconnue plus chère que La Marsa)
+REF_MARCHE_MEDIANE = statistics.median(REF_MANUELLES.values())
 
-    # 1. Référence mesurée par ville (données clean_location)
-    if annonce.get("ville") and refs.get("par_ville", {}).get(annonce.get("ville")):
-        return refs["par_ville"][annonce.get("ville")]
+
+def _prix_m2_pour(annonce, refs):
+    """Retourne (prix/m², source de la référence)."""
+    ville = (annonce.get("ville") or "").strip().lower()
+    titre = (annonce.get("titre") or "").lower()
+
+    # 1. Référence mesurée par ville (données clean_location, >= 3 annonces)
+    for nom, val in refs.get("par_ville", {}).items():
+        if ville and nom.lower() == ville:
+            return val, f"mesure:{nom}"
 
     # 2. Ville connue → référence marché
     if ville:
         if ville in REF_MANUELLES:
-            return REF_MANUELLES[ville]
+            return REF_MANUELLES[ville], f"marche:{ville}"
         for zone, val in REF_MANUELLES.items():
-            if zone in ville or ville in zone:
-                return val
+            if _contient(ville, zone):
+                return val, f"marche:{zone}"
+        ville_quartier = _ville_depuis_titre(ville)
+        if ville_quartier in REF_MANUELLES:
+            return REF_MANUELLES[ville_quartier], f"marche:{ville_quartier}"
 
     # 3. Quartier/zone connu directement dans le titre (el manar, chotrana...)
-    t_low = titre.lower()
     for zone, val in REF_MANUELLES.items():
-        if zone in t_low:
-            return val
+        if _contient(titre, zone):
+            return val, f"marche:{zone}"
 
     # 4. Ville devinée depuis le titre
     ville_titre = _ville_depuis_titre(titre)
-    if ville_titre and ville_titre in REF_MANUELLES:
-        return REF_MANUELLES[ville_titre]
-    if ville_titre:
-        for zone, val in REF_MANUELLES.items():
-            if zone in ville_titre or ville_titre in zone:
-                return val
+    if ville_titre in REF_MANUELLES:
+        return REF_MANUELLES[ville_titre], f"marche:{ville_titre}"
 
-    # 5. Référence mesurée par type de bien
+    # 5. Référence mesurée par type de bien (>= 3 annonces)
     type_bien = annonce.get("type_bien") or "appartement"
     if refs.get("par_type", {}).get(type_bien):
-        return refs["par_type"][type_bien]
+        return refs["par_type"][type_bien], f"mesure:{type_bien}"
 
-    # 6. Médiane globale mesurée
-    if refs.get("prix_m2_mediane"):
-        return refs["prix_m2_mediane"]
-
-    # 7. Fallback marché
-    return 12.0
+    # 6. Médiane du marché
+    return refs.get("prix_m2_mediane") or REF_MARCHE_MEDIANE, "defaut"
 
 
 def predict_one(annonce):
     refs = _charger_references()
-    prix_m2 = _prix_m2_pour(annonce, refs)
+    prix_m2, source = _prix_m2_pour(annonce, refs)
     surface = annonce.get("surface")
 
     loyer = surface * prix_m2 if surface else None
@@ -152,6 +161,7 @@ def predict_one(annonce):
         "intervalle_bas": round(float(loyer * 0.85), 2),
         "intervalle_haut": round(float(loyer * 1.15), 2),
         "modele": "M2-reference",
+        "source_reference": source,
     }
 
 

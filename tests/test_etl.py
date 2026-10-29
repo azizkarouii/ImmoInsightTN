@@ -3,10 +3,10 @@
 import numpy as np
 import pytest
 
-from etl.cleaner import clean_prix, clean_surface, normalize_type_bien
+from etl.cleaner import clean_prix, clean_surface, normalize_type_bien, is_rental_title, clean_titre
 from etl.deduplicator import text_to_minhash
 from etl.feature_engineer import haversine
-from etl.geocoder import _infer_location_candidates, build_geocode_queries
+from etl.geocoder import _infer_location_candidates, _names_known_city, build_geocode_queries, extract_title_place, extract_url_location
 from models.roi_score.calculator import compute_roi, score_roi, label_roi
 
 
@@ -77,6 +77,18 @@ class TestNormalizeTypeBien:
         assert normalize_type_bien("Bel S2 à Tunis", None) == "appartement"
 
 
+class TestRentalFilter:
+    def test_rental_titles(self):
+        assert is_rental_title("A Louer étage De Villa Au Début De Corniche Bizerte")
+        assert is_rental_title("Villa haut standing à Louer – Lac 2 – Longue Durée")
+        assert not is_rental_title("Appartement à vendre à La Marsa")
+        assert not is_rental_title(None)
+
+    def test_tayara_suffix(self):
+        assert clean_titre("Maison S+2 en vente | Tayara") == "Maison S+2 en vente"
+        assert clean_titre(float("nan")) is None
+
+
 class TestMinHash:
     def test_textes_similaires(self):
         m1 = text_to_minhash("Appartement S2 neuf à la Soukra Chotrana 3")
@@ -126,6 +138,35 @@ class TestGeocoderCandidates:
         assert queries[0].startswith("Hammamet")
         assert "Tunisie" in queries[0]
         assert any("Sousse" in q for q in queries)
+
+
+    def test_nan_fields_never_become_queries(self):
+        # "nan, Tunisie" était résolu par Photon en un bâtiment de Nabeul
+        doc = {"ville": float("nan"), "gouvernorat": "nan", "quartier": None, "adresse_brute": "None", "titre": "Maison S+2"}
+        queries = build_geocode_queries(doc)
+        assert not any("nan" in q.lower() or "none" in q.lower() for q in queries)
+
+    def test_no_country_level_fallback(self):
+        assert build_geocode_queries({"titre": "Duplex de luxe avec Jardin et Piscine"}) == []
+
+    def test_tayara_url_location(self):
+        loc = extract_url_location("https://www.tayara.tn/item/maisons-et-villas/bizerte/bizerte-nord/une-maison/6a57")
+        assert loc == {"gouvernorat": "Bizerte", "delegation": "Bizerte Nord"}
+
+    def test_known_city_in_place_takes_precedence(self):
+        # Gouvernorat Tayara "Tunis" mais titre "à Hammam Sousse" : le lieu cité d'abord
+        assert _names_known_city("Hammam Sousse, Tunisie")
+        assert not _names_known_city("Hammam Sousse, Tunis, Tunisie")
+        assert not _names_known_city("Zone Touristique, Tunisie")
+        doc = {"url": "https://www.tayara.tn/item/appartements/tunis/tunis/a-louer/1", "titre": "Etage de villa à Hammam Sousse"}
+        assert build_geocode_queries(doc)[0] == "Hammam Sousse, Tunisie"
+
+    def test_title_place(self):
+        assert extract_title_place("Appartement en vente à La Manouba. Surface de 68 m²") == "La Manouba"
+        assert extract_title_place("Superbe appartement à vendre à El Omrane Supérieur. Surface totale 107 m²") == "El Omrane Supérieur"
+        assert extract_title_place("Appartement S1 à vendre à El Menzah 9. Surface totale 73 m²") == "El Menzah 9"
+        assert extract_title_place("A vendre grand S3 au 1er étage") is None
+        assert extract_title_place("Fabuleux S2 à vendre au RDC") is None
 
 
 class TestROI:

@@ -1813,4 +1813,36 @@ Améliorations :
 - Tests API skippés si MongoDB local indisponible (fixture `mongo_available`).
 - Dépendances ajoutées : `pytest`, `pytest-cov`, `httpx`.
 
+### 17.12 Mise à jour Octobre 2026 — Correction carte, ETL et dashboard
+
+**Carte (cause racine : géocodage)** — 66 annonces vente sur 13 positions seulement :
+- Les champs vides stockés en `NaN` produisaient la requête « nan, Tunisie », résolue par Photon en un bâtiment de **Nabeul** (25 annonces Tayara de Bizerte/Sousse/Ariana empilées à Nabeul).
+- Le repli final « Tunisie » plaçait 10 annonces au **centroïde du pays** (désert de Kébili).
+- `etl/geocoder.py` : localisation déduite de l'URL Tayara (`/item/<cat>/<gouvernorat>/<délégation>/`) et du titre (« à La Manouba »), plus de requête pays, contrôle de distance (40 km) par rapport à la ville/gouvernorat, cache persistant `data/geocode_cache.json`, throttling 1 req/s, Nominatim en secours (User-Agent conforme). Backfill `gouvernorat`/`ville` (83/104 renseignés vs ~20).
+- API `/annonces/carte` : coordonnées renvoyées telles quelles (suppression du jitter appliqué deux fois, backend + front), champs `geo_type`/`geocoded_query`.
+- Front : clustering `leaflet.markercluster` (spiderfy au zoom max), heatmap normalisée par percentiles (prix/m² vente, prix/nuit estival), popups échappées (XSS), mention « position approximative », requêtes annulées au changement de collection, légende positionnée sur la carte.
+
+**Données** : `clean_*` étaient périmées avec des **prix et surfaces ×10** (ex. 480 000 → 4 800 000). Pipeline ETL relancé : clean_vente 104 (97 géolocalisées, 42 positions distinctes), clean_location 4, clean_estival 182. Le cleaner retire les locations publiées en rubrique vente (« à louer ») et le suffixe « | Tayara » ; `NaN` → `null` à l'écriture. URLs Booking doublées (`https://www.booking.comhttps://...`) corrigées (scraper + base).
+
+**API / modèles** : `/api/fiabilite/alertes` était capturé par `/{annonce_id}` (ordre des routes) ; `/api/vente/estimation` plantait (dtype `object`) et ignorait `type_bien`. M1 réentraîné sur `log1p(prix)` : MAE 1 036 k → 228 k DT, plus de prédictions négatives.
+
+**Dashboard** : l'onglet Statistiques faisait planter le navigateur (getter `collections` recréé à chaque détection → boucle avec le resize Chart.js) ; un seul des 4 graphiques survivait (destruction globale) ; historique des prix toujours vide (`price_history` exclu → paramètre `with_history`). NG0100 sur la carte corrigé.
+
+**Tests** : 57 (dont géocodage, filtre locations, sanitation carte, URLs).
+
+### 17.13 Mise à jour Octobre 2026 — Audit et correction des modèles de prédiction
+
+Évaluation par validation croisée contre une référence naïve, puis corrections :
+
+| Modèle | Problème constaté | Correction | Résultat (CV) |
+|---|---|---|---|
+| **Données estivales** | Booking affiche le prix **total d'un séjour de 7 nuits**, stocké comme prix/nuit (médiane « 1 904 DT/nuit ») | Scraper : `prix_nuit = prix_sejour / nb_nuits` (+ `prix_sejour`, `nb_nuits`) ; migration de `raw_estival` | Médiane réaliste : 280 DT/nuit |
+| **M3 estival** | Ville sans effet (toutes à 2 843 DT), ville inconnue/minuscules → erreur technique, `dist_plages` ignoré, pire que la médiane par ville | Remplacé par une **référence par ville** (médiane, intervalle P25–P75) : XGBoost/Ridge ne battent pas la médiane (distances identiques par ville, score d'avis non corrélé, capacité non scrapée). Villes normalisées + alias, `GET /api/estival/villes` | Erreur médiane 49 % (dispersion intrinsèque) |
+| **M1 vente** | Gouvernorat ignoré, distances POI vides à la prédiction, prix non monotone en surface, intervalle ±10 % fictif, surfaces aberrantes (1 m², 2 935 m²) | Profils géographiques par zone (`zone_profiles.json`), arbres régularisés + contrainte monotone sur la surface, intervalle 80 % empirique, surfaces hors [15, 2000] m² ignorées au nettoyage | Erreur médiane ≈ 28 % vs 37,5 % (médiane naïve) |
+| **M2 loyer** | Ville inconnue plus chère que La Marsa (référence tirée d'un studio à 50 DT/m²), « Tunisie » reconnu comme « Tunis », loyer négatif | Références mesurées seulement si ≥ 10 annonces, repli sur la médiane marché, correspondance sur mots entiers, champ `source_reference` | — (4 annonces seulement) |
+| **M4 fiabilité** | Plus exécuté (alertes fiabilité vides), scores associés aux annonces par position, prédiction unitaire incohérente | Mise à jour par `_id`, médianes/normalisation d'entraînement réutilisées, **ajouté au pipeline ETL** (étape 5) | 104 annonces scorées |
+| **API** | Erreurs renvoyées en HTTP 200 `{"statut": "erreur"}`, surfaces ≤ 0 acceptées | Validation (`surface > 0`, `prix > 0`...), erreurs 422 / 503, messages affichés dans le front | — |
+
+Corrigé aussi : regex du géocodeur (`_names_known_city`) qui ne reconnaissait jamais une ville connue. **Tests** : 66.
+
 *Document maintenu par Mohamed Aziz Karoui — ImmoInsight TN — 2025 — Mise à jour Juillet 2026*

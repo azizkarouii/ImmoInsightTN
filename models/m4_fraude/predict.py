@@ -16,19 +16,23 @@ FRAUD_FEATURES = ["prix", "surface", "dist_transports_km"]
 def load_model():
     iso = joblib.load(os.path.join(MODEL_DIR, "isolation_forest.pkl"))
     scaler = joblib.load(os.path.join(MODEL_DIR, "scaler.pkl"))
-    return iso, scaler
+    with open(os.path.join(MODEL_DIR, "metrics.json")) as f:
+        metrics = json.load(f)
+    return iso, scaler, metrics
 
 
 def predict_one(annonce):
-    iso, scaler = load_model()
+    iso, scaler, metrics = load_model()
     row = {f: annonce.get(f, np.nan) for f in FRAUD_FEATURES}
-    row_df = pd.DataFrame([row])
-    row_df = row_df.fillna(row_df.median(numeric_only=True))
+    # Une ligne seule n'a pas de médiane propre : médianes d'entraînement
+    row_df = pd.DataFrame([row]).apply(pd.to_numeric, errors="coerce").fillna(metrics.get("medians", {}))
     X = scaler.transform(row_df)
     score = iso.score_samples(X)[0]
     label = "anomalie" if iso.predict(X)[0] == -1 else "normal"
-    fiabilite = max(0, min(100, 100 * (score + 0.5)))
-    return {"label": label, "fiabilite": round(fiabilite, 1)}
+    # Même normalisation min-max qu'à l'entraînement (scores stockés en base)
+    lo, hi = metrics.get("score_min", -0.5), metrics.get("score_max", 0.5)
+    fiabilite = max(0, min(100, 100 * (score - lo) / (hi - lo))) if hi > lo else 50.0
+    return {"label": label, "fiabilite": round(float(fiabilite), 1)}
 
 
 def run():

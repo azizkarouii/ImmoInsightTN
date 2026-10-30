@@ -2,6 +2,7 @@ import { API_BASE } from './api.config';
 import { Component, OnInit } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { CommonModule } from '@angular/common';
+import { IconComponent } from './icon.component';
 import { FormsModule } from '@angular/forms';
 import { Subject, Subscription } from 'rxjs';
 import { debounceTime, distinctUntilChanged } from 'rxjs/operators';
@@ -21,7 +22,7 @@ interface Job {
 @Component({
   selector: 'app-alerts',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, IconComponent],
   template: `
     <div class="card">
       <div class="section-head">
@@ -49,7 +50,7 @@ interface Job {
         <button *ngFor="let k of kpis" class="kpi-card" [class.active]="onglet === k.id"
                 [class.disabled]="k.id === 'opportunites' && collection === 'clean_estival'"
                 (click)="setOnglet(k.id)">
-          <span class="kpi-icon">{{ k.icon }}</span>
+          <span class="kpi-icon" [attr.data-ton]="k.ton"><app-icon [name]="k.icon"></app-icon></span>
           <strong>{{ compteur(k.id) ?? '—' }}</strong>
           <span>{{ k.label }}</span>
           <small>{{ k.id === 'prix' && resume ? detailVariations() : k.aide }}</small>
@@ -60,16 +61,16 @@ interface Job {
            recherche ou un tri, la barre de recherche et le tableau restent affichés (le
            champ de saisie n'est pas recréé et garde le focus) -->
       <div *ngIf="loading && !rows.length" class="loading"><div class="spinner"></div>Chargement...</div>
-      <div *ngIf="error" class="result-box" style="background:#fbe9e7"><p style="color:#c62828">⚠️ {{ error }}</p></div>
+      <div *ngIf="error" class="result-erreur" role="alert"><app-icon name="alert"></app-icon>{{ error }}</div>
       <div *ngIf="avertissement" class="notice">{{ avertissement }}</div>
 
       <ng-container *ngIf="rows.length || !loading">
         <div class="table-toolbar" *ngIf="onglet === 'nouvelles'">
           <div class="search-box">
-            <span aria-hidden="true">🔍</span>
+            <app-icon name="search"></app-icon>
             <input type="search" [ngModel]="recherche" (ngModelChange)="rechercher($event)" maxlength="100"
                    placeholder="Rechercher par titre, ville, quartier… (ex. « villa la marsa »)" aria-label="Rechercher dans les nouvelles annonces" />
-            <button *ngIf="recherche" type="button" (click)="rechercher('')" aria-label="Effacer la recherche">✕</button>
+            <button *ngIf="recherche" type="button" (click)="rechercher('')" aria-label="Effacer la recherche"><app-icon name="x"></app-icon></button>
           </div>
         </div>
 
@@ -87,7 +88,7 @@ interface Job {
                     [attr.aria-sort]="tri.cle === c.cle ? (tri.ordre === 'asc' ? 'ascending' : 'descending') : 'none'">
                   <button type="button" (click)="trier(c.cle)" [title]="'Trier par ' + c.libelle.toLowerCase()">
                     {{ c.libelle }}
-                    <span class="tri-icone" aria-hidden="true">{{ tri.cle === c.cle ? (tri.ordre === 'asc' ? '▲' : '▼') : '↕' }}</span>
+                    <app-icon class="tri-icone" [name]="tri.cle === c.cle ? (tri.ordre === 'asc' ? 'chevron-up' : 'chevron-down') : 'chevrons-up-down'"></app-icon>
                   </button>
                 </th>
               </tr>
@@ -209,12 +210,12 @@ export class AlertsComponent implements OnInit {
     { id: 'clean_estival', label: 'Estival' },
   ];
   periodes = [1, 7, 30];
-  kpis: { id: Onglet; icon: string; label: string; aide: string }[] = [
-    { id: 'nouvelles', icon: '🆕', label: 'Nouvelles annonces', aide: 'apparues sur la période' },
-    { id: 'prix', icon: '📉', label: 'Variations de prix', aide: 'baisses et hausses sur la période' },
-    { id: 'opportunites', icon: '💎', label: 'Opportunités', aide: 'prix nettement sous l\'estimation' },
-    { id: 'supprimees', icon: '🚫', label: 'Annonces retirées', aide: 'vérifiées hors ligne' },
-    { id: 'fiabilite', icon: '⚠️', label: 'Fiabilité faible', aide: 'score M4 ≤ 30 (vente)' },
+  kpis: { id: Onglet; icon: string; ton: string; label: string; aide: string }[] = [
+    { id: 'nouvelles', icon: 'sparkles', ton: 'info', label: 'Nouvelles annonces', aide: 'apparues sur la période' },
+    { id: 'prix', icon: 'trending-down', ton: 'primary', label: 'Variations de prix', aide: 'baisses et hausses sur la période' },
+    { id: 'opportunites', icon: 'gem', ton: 'success', label: 'Opportunités', aide: 'prix nettement sous l\'estimation' },
+    { id: 'supprimees', icon: 'ban', ton: 'neutral', label: 'Annonces retirées', aide: 'vérifiées hors ligne' },
+    { id: 'fiabilite', icon: 'alert', ton: 'warning', label: 'Fiabilité faible', aide: 'score M4 ≤ 30 (vente)' },
   ];
 
   onglet: Onglet = 'nouvelles';

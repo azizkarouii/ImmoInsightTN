@@ -3,6 +3,7 @@ import { Component, OnInit } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { FormsModule } from '@angular/forms';
 import { CommonModule } from '@angular/common';
+import { IconComponent } from './icon.component';
 
 type Mode = 'vente' | 'location' | 'estival' | 'roi';
 
@@ -23,7 +24,7 @@ const nf = (v: number, d = 0) => Number(v).toLocaleString('fr-FR', { maximumFrac
 @Component({
   selector: 'app-estimation',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, IconComponent],
   template: `
     <div class="card">
       <div class="section-head">
@@ -36,7 +37,7 @@ const nf = (v: number, d = 0) => Number(v).toLocaleString('fr-FR', { maximumFrac
 
       <div class="mode-tabs" role="tablist" aria-label="Type d'estimation">
         <button *ngFor="let m of modes" role="tab" [attr.aria-selected]="mode === m.id" [class.active]="mode === m.id" (click)="changerMode(m.id)">
-          <span class="mode-icone" aria-hidden="true">{{ m.icone }}</span>
+          <app-icon class="mode-icone" [name]="m.icone"></app-icon>
           <span>{{ m.libelle }}</span>
           <small>{{ m.aide }}</small>
         </button>
@@ -77,9 +78,9 @@ const nf = (v: number, d = 0) => Number(v).toLocaleString('fr-FR', { maximumFrac
               <div class="champ">
                 <label>Équipements</label>
                 <div class="choix">
-                  <button type="button" [class.actif]="vente.parking" (click)="vente.parking = !vente.parking">🚗 Parking</button>
-                  <button type="button" [class.actif]="vente.ascenseur" (click)="vente.ascenseur = !vente.ascenseur">🛗 Ascenseur</button>
-                  <button type="button" [class.actif]="vente.piscine" (click)="vente.piscine = !vente.piscine">🏊 Piscine</button>
+                  <button type="button" [class.actif]="vente.parking" (click)="vente.parking = !vente.parking">Parking</button>
+                  <button type="button" [class.actif]="vente.ascenseur" (click)="vente.ascenseur = !vente.ascenseur">Ascenseur</button>
+                  <button type="button" [class.actif]="vente.piscine" (click)="vente.piscine = !vente.piscine">Piscine</button>
                 </div>
               </div>
             </ng-container>
@@ -172,7 +173,7 @@ const nf = (v: number, d = 0) => Number(v).toLocaleString('fr-FR', { maximumFrac
               <div class="champ">
                 <label>Emplacement</label>
                 <div class="choix">
-                  <button type="button" [class.actif]="estival.front_de_mer === true" (click)="estival.front_de_mer = estival.front_de_mer === true ? null : true">🌊 Front de mer</button>
+                  <button type="button" [class.actif]="estival.front_de_mer === true" (click)="estival.front_de_mer = estival.front_de_mer === true ? null : true">Front de mer</button>
                 </div>
               </div>
             </ng-container>
@@ -221,12 +222,12 @@ const nf = (v: number, d = 0) => Number(v).toLocaleString('fr-FR', { maximumFrac
         <!-- ===================== Résultat ===================== -->
         <section class="estim-result" aria-live="polite">
           <div class="result-vide" *ngIf="!chargement && !erreur && (mode === 'roi' ? !roiResultat : !resultat[mode])">
-            <span class="result-vide-icone" aria-hidden="true">{{ modeCourant().icone }}</span>
+            <app-icon class="result-vide-icone" [name]="modeCourant().icone"></app-icon>
             <p>{{ modeCourant().vide }}</p>
           </div>
 
           <div class="result-chargement" *ngIf="chargement"><div class="spinner"></div>Calcul en cours…</div>
-          <div class="result-erreur" *ngIf="erreur && !chargement">⚠️ {{ erreur }}</div>
+          <div class="result-erreur" *ngIf="erreur && !chargement" role="alert"><app-icon name="alert"></app-icon>{{ erreur }}</div>
 
           <ng-container *ngIf="mode !== 'roi' && resultat[mode] as r">
             <ng-container *ngIf="!chargement && !erreur">
@@ -245,14 +246,14 @@ const nf = (v: number, d = 0) => Number(v).toLocaleString('fr-FR', { maximumFrac
               </div>
 
               <p class="result-note" *ngIf="r.erreur">Erreur typique du modèle : ±{{ r.erreur | number:'1.0-0' }} % (médiane mesurée sur des annonces réelles).</p>
-              <p class="result-zone ok" *ngIf="r.zone">📍 Zone prise en compte : {{ r.zone }}</p>
-              <p class="result-zone attention" *ngIf="!r.zone && r.zoneDemandee">⚠️ « {{ r.zoneDemandee }} » n'apparaît pas dans les données : estimation sans effet de la localisation.</p>
+              <p class="result-zone ok" *ngIf="r.zone"><app-icon name="pin"></app-icon>Zone prise en compte : {{ r.zone }}</p>
+              <p class="result-zone attention" *ngIf="!r.zone && r.zoneDemandee"><app-icon name="alert"></app-icon>« {{ r.zoneDemandee }} » n'apparaît pas dans les données : estimation sans effet de la localisation.</p>
 
               <dl class="result-details" *ngIf="r.details.length">
                 <div *ngFor="let d of r.details"><dt>{{ d.libelle }}</dt><dd>{{ d.valeur }}</dd></div>
               </dl>
 
-              <button type="button" class="btn btn-secondaire" (click)="versRentabilite()">📈 {{ texteVersRoi() }}</button>
+              <button type="button" class="btn btn-secondaire" (click)="versRentabilite()"><app-icon name="trending-up"></app-icon>{{ texteVersRoi() }}</button>
             </ng-container>
           </ng-container>
 
@@ -310,13 +311,13 @@ const nf = (v: number, d = 0) => Number(v).toLocaleString('fr-FR', { maximumFrac
 })
 export class EstimationComponent implements OnInit {
   modes: { id: Mode; icone: string; libelle: string; aide: string; resultat: string; vide: string }[] = [
-    { id: 'vente', icone: '🏷️', libelle: 'Prix de vente', aide: 'Combien vaut ce bien ?', resultat: 'Prix de vente estimé',
+    { id: 'vente', icone: 'tag', libelle: 'Prix de vente', aide: 'Combien vaut ce bien ?', resultat: 'Prix de vente estimé',
       vide: 'Indiquez au minimum la surface, puis lancez l\'estimation.' },
-    { id: 'location', icone: '🏠', libelle: 'Loyer mensuel', aide: 'Location à l\'année', resultat: 'Loyer mensuel estimé',
+    { id: 'location', icone: 'house', libelle: 'Loyer mensuel', aide: 'Location à l\'année', resultat: 'Loyer mensuel estimé',
       vide: 'Précisez la ville et la surface pour une estimation plus fiable.' },
-    { id: 'estival', icone: '🌊', libelle: 'Location estivale', aide: 'Prix par nuit', resultat: 'Prix par nuit estimé',
+    { id: 'estival', icone: 'waves', libelle: 'Location estivale', aide: 'Prix par nuit', resultat: 'Prix par nuit estimé',
       vide: 'Choisissez une ville balnéaire ; ajoutez le type et les chambres pour affiner.' },
-    { id: 'roi', icone: '📈', libelle: 'Rentabilité', aide: 'Rendement d\'un achat', resultat: '',
+    { id: 'roi', icone: 'trending-up', libelle: 'Rentabilité', aide: 'Rendement d\'un achat', resultat: '',
       vide: 'Saisissez un prix d\'achat et un loyer et/ou un prix par nuit. Astuce : estimez-les dans les autres onglets.' },
   ];
   typesVente = [{ id: 'appartement', libelle: 'Appartement' }, { id: 'villa', libelle: 'Villa / maison' }, { id: 'terrain', libelle: 'Terrain' }];

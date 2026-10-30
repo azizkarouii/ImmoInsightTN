@@ -103,3 +103,5 @@ api/.env
 # Test outputs
 tests/__pycache__/
 tests/.coverage
+
+.claude/

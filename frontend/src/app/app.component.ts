@@ -7,35 +7,37 @@ import { EstimationComponent } from './estimation.component';
 import { StatsComponent } from './stats.component';
 import { AlertsComponent } from './alerts.component';
 import { ChatWidgetComponent } from './chat-widget.component';
+import { IconComponent } from './icon.component';
 
 @Component({
   selector: 'app-root',
   standalone: true,
-  imports: [CommonModule, MapComponent, EstimationComponent, StatsComponent, AlertsComponent, ChatWidgetComponent],
+  imports: [CommonModule, MapComponent, EstimationComponent, StatsComponent, AlertsComponent, ChatWidgetComponent, IconComponent],
   template: `
     <div class="app-shell">
+      <button type="button" class="skip-link" (click)="allerAuContenu()">Aller au contenu</button>
       <header class="app-header">
         <div class="logo">
-          <div class="icon">🏠</div>
+          <div class="logo-mark"><app-icon name="house"></app-icon></div>
           <div>
-            ImmoInsight TN
+            ImmoInsight <span class="logo-tn">TN</span>
             <span class="subtitle">Vente, location et estival en Tunisie</span>
           </div>
         </div>
         <nav class="nav-tabs" aria-label="Sections">
           <button *ngFor="let t of tabs" [class.active]="currentTab === t.id" [attr.aria-current]="currentTab === t.id ? 'page' : null" (click)="ouvrir(t.id)">
-            {{ t.label }}
-            <span *ngIf="t.id === 'alertes' && nouveautes24h" class="nav-badge" title="Nouvelles annonces (24 h)">{{ badge(nouveautes24h) }}</span>
+            <app-icon [name]="t.icon"></app-icon><span class="nav-label">{{ t.label }}</span>
+            <span *ngIf="t.id === 'alertes' && nouveautes24h" class="nav-badge" [attr.aria-label]="nouveautes24h + ' nouvelles annonces en 24 h'">{{ badge(nouveautes24h) }}</span>
           </button>
         </nav>
       </header>
 
-      <main class="main-content">
+      <main class="main-content" id="contenu" tabindex="-1">
         <div class="status-strip">
           <span><strong>{{ totalAnnonces !== null ? (totalAnnonces | number) : '—' }}</strong> annonces analysées</span>
           <button type="button" class="strip-lien" (click)="ouvrir('alertes')" title="Voir les nouvelles annonces"><strong>{{ nouveautes24h ?? '—' }}</strong> nouvelles en 24 h →</button>
           <span><span class="dot" [class.ok]="collecteRecente" [class.warn]="!collecteRecente"></span>
-            Dernière collecte : <strong>{{ derniereCollecte || 'aucune' }}</strong></span>
+            {{ collecteRecente ? 'À jour' : 'Collecte ancienne' }} · Dernière collecte : <strong>{{ derniereCollecte || 'aucune' }}</strong></span>
           <span *ngIf="prochaineCollecte">Prochaine : <strong>{{ prochaineCollecte }}</strong></span>
         </div>
 
@@ -56,10 +58,10 @@ import { ChatWidgetComponent } from './chat-widget.component';
 })
 export class AppComponent implements OnInit {
   tabs = [
-    { id: 'carte', label: '🗺️ Carte' },
-    { id: 'stats', label: '📊 Statistiques' },
-    { id: 'estimation', label: '📐 Estimation' },
-    { id: 'alertes', label: '🔔 Alertes' },
+    { id: 'carte', icon: 'map', label: 'Carte' },
+    { id: 'stats', icon: 'chart', label: 'Statistiques' },
+    { id: 'estimation', icon: 'calculator', label: 'Estimation' },
+    { id: 'alertes', icon: 'bell', label: 'Alertes' },
   ];
   currentTab = 'carte';
   totalAnnonces: number | null = null;
@@ -76,6 +78,11 @@ export class AppComponent implements OnInit {
     this.currentTab = id;
     history.pushState(null, '', '#' + id);
     window.scrollTo({ top: 0 });
+  }
+
+  /** Lien d'évitement : un bouton plutôt qu'une ancre, le hash de l'URL portant l'onglet courant. */
+  allerAuContenu(): void {
+    document.getElementById('contenu')?.focus();
   }
 
   @HostListener('window:popstate')

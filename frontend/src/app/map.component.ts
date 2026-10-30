@@ -2,6 +2,7 @@ import { API_BASE } from './api.config';
 import { Component, AfterViewInit, OnDestroy } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { CommonModule } from '@angular/common';
+import { IconComponent } from './icon.component';
 import { FormsModule } from '@angular/forms';
 import { Subscription } from 'rxjs';
 import L from 'leaflet';
@@ -27,7 +28,7 @@ const typeDe = (i: any): string => {
 @Component({
   selector: 'app-map',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, IconComponent],
   template: `
     <div class="card map-wrapper">
       <div class="section-head" style="padding:18px 16px 0 16px;margin-bottom:0;align-items:center">
@@ -52,10 +53,10 @@ const typeDe = (i: any): string => {
         <span style="flex:1"></span>
         <button class="mode-btn"
                 [class.active]="mode === 'heat'"
-                (click)="setMode('heat')">🔥 Heatmap prix</button>
+                (click)="setMode('heat')" [attr.aria-pressed]="mode === 'heat'"><app-icon name="flame"></app-icon>Heatmap prix</button>
         <button class="mode-btn"
                 [class.active]="mode === 'markers'"
-                (click)="setMode('markers')">📍 Marqueurs</button>
+                (click)="setMode('markers')" [attr.aria-pressed]="mode === 'markers'"><app-icon name="pin"></app-icon>Marqueurs</button>
         <span class="map-etat" [class.erreur]="error">
           {{ loading ? 'Chargement…' : error ? error : visibleCount + ' dans la vue' }}
         </span>
@@ -383,23 +384,21 @@ export class MapComponent implements AfterViewInit, OnDestroy {
       .join(', ') || 'N/A';
     const url = /^https?:\/\//i.test(item.url || '') ? item.url : null;
     const approx = item.geo_type && !PRECISE_GEO_TYPES.has(item.geo_type)
-      ? `<div style="margin-top:6px;font-size:0.75rem;color:#8a6d3b">≈ Position approximative (${esc(item.geocoded_query || lieu)})</div>`
+      ? `<div class="popup-approx">≈ Position approximative (${esc(item.geocoded_query || lieu)})</div>`
       : '';
 
     return `
-      <div style="min-width:180px">
-        <b style="color:#1a237e;font-size:1rem">${esc((item.titre || 'Sans titre').slice(0, 60))}</b><br/>
-        <hr style="margin:6px 0;border:none;border-top:1px solid #e0e0e0"/>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:0.85rem">
-          <span>💰 ${esc(prix)}</span>
-          <span>📐 ${esc(surface)}</span>
-          <span>🏷️ ${esc(TYPES[typeDe(item)].libelle)}</span>
-          <span>🛏️ ${item.nb_chambres ? esc(item.nb_chambres) + ' ch.' : 'N/A'}</span>
-          <span>📍 ${esc(lieu)}</span>
-        </div>
+      <div class="popup">
+        <b class="popup-titre">${esc((item.titre || 'Sans titre').slice(0, 60))}</b>
+        <div class="popup-prix">${esc(prix)}</div>
+        <dl class="popup-grille">
+          <div><dt>Surface</dt><dd>${esc(surface)}</dd></div>
+          <div><dt>Type</dt><dd>${esc(TYPES[typeDe(item)].libelle)}</dd></div>
+          <div><dt>Chambres</dt><dd>${item.nb_chambres ? esc(item.nb_chambres) : 'N/A'}</dd></div>
+          <div><dt>Lieu</dt><dd>${esc(lieu)}</dd></div>
+        </dl>
         ${approx}
-        <hr style="margin:6px 0;border:none;border-top:1px solid #e0e0e0"/>
-        ${url ? `<a href="${esc(url)}" target="_blank" rel="noopener" style="color:#00bcd4;font-size:0.8rem">Voir l'annonce →</a>` : ''}
+        ${url ? `<a class="popup-lien" href="${esc(url)}" target="_blank" rel="noopener">Voir l'annonce →</a>` : ''}
       </div>
     `;
   }

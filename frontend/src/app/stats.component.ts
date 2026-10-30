@@ -9,9 +9,10 @@ import Chart, { ChartConfiguration } from 'chart.js/auto';
 // Couleurs par entité, identiques sur toute la page (palette validée daltonisme)
 const SEGMENT = { vente: '#2a78d6', location: '#eb6834', estival: '#1baf7a' } as const;
 const TYPE_BIEN: Record<string, string> = { appartement: '#6250d6', villa: '#eda100', maison_vacances: '#e87ba4' };
-const NEUTRE = '#13204a';
-const ENCRE = '#526173';
-const GRILLE = 'rgba(18, 32, 54, 0.07)';
+const NEUTRE = '#134e4a';
+const ENCRE = '#475569';
+const GRILLE = 'rgba(15, 23, 42, 0.07)';
+Chart.defaults.font.family = "'Fira Sans', 'Segoe UI', system-ui, sans-serif";
 const LIBELLE_TYPE: Record<string, string> = { appartement: 'Appartement', villa: 'Villa / maison', maison_vacances: 'Maison de vacances' };
 const LIBELLE_SEGMENT: Record<string, string> = { vente: 'Vente', location: 'Location', estival: 'Estival' };
 // Sources : rouge et vert jamais adjacents dans la barre empilée (séparés par le bleu), pourcentages écrits sur les barres
@@ -24,7 +25,7 @@ const etiquettesSegments = {
   afterDatasetsDraw(chart: any) {
     const ctx = chart.ctx;
     ctx.save();
-    ctx.font = '600 11px Inter, system-ui, sans-serif';
+    ctx.font = "600 11px 'Fira Sans', system-ui, sans-serif";
     ctx.fillStyle = '#ffffff';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';

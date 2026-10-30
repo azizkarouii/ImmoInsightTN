@@ -1,5 +1,6 @@
 import { Component, ElementRef, HostListener, OnInit, ViewChild } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { IconComponent } from './icon.component';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
 import { API_BASE } from './api.config';
@@ -31,10 +32,10 @@ const SUGGESTIONS_PAR_DEFAUT = [
 @Component({
   selector: 'app-chat-widget',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, IconComponent],
   template: `
     <button class="chat-fab" *ngIf="!ouvert" (click)="ouvrir()" aria-label="Ouvrir l'assistant ImmoInsight">
-      <span aria-hidden="true">💬</span>
+      <app-icon name="message"></app-icon>
     </button>
 
     <section class="chat-panel" *ngIf="ouvert" role="dialog" aria-label="Assistant ImmoInsight">
@@ -44,14 +45,14 @@ const SUGGESTIONS_PAR_DEFAUT = [
           <span>Répond à partir des annonces de la plateforme</span>
         </div>
         <div class="chat-actions">
-          <button *ngIf="messages.length" (click)="reinitialiser()" title="Nouvelle conversation" aria-label="Nouvelle conversation">↺</button>
-          <button (click)="ouvert = false" title="Fermer" aria-label="Fermer l'assistant">✕</button>
+          <button *ngIf="messages.length" (click)="reinitialiser()" title="Nouvelle conversation" aria-label="Nouvelle conversation"><app-icon name="reset"></app-icon></button>
+          <button (click)="ouvert = false" title="Fermer" aria-label="Fermer l'assistant"><app-icon name="x"></app-icon></button>
         </div>
       </header>
 
       <div class="chat-body" #corps>
         <div class="chat-welcome" *ngIf="!messages.length">
-          <p>Bonjour 👋 Je réponds à vos questions sur le marché immobilier tunisien à partir des données collectées :
+          <p>Bonjour ! Je réponds à vos questions sur le marché immobilier tunisien à partir des données collectées :
             prix, loyers, location estivale, estimations, rentabilité et alertes.</p>
           <div class="chat-suggestions">
             <button *ngFor="let s of suggestions" (click)="envoyer(s)">{{ s }}</button>
@@ -82,7 +83,7 @@ const SUGGESTIONS_PAR_DEFAUT = [
         <textarea #champ [(ngModel)]="saisie" name="saisie" rows="1" maxlength="2000"
                   placeholder="Posez votre question…" (keydown)="clavier($event)" [disabled]="chargement"
                   aria-label="Votre question"></textarea>
-        <button type="submit" [disabled]="chargement || !saisie.trim()" aria-label="Envoyer">➤</button>
+        <button type="submit" [disabled]="chargement || !saisie.trim()" aria-label="Envoyer"><app-icon name="send"></app-icon></button>
       </form>
       <p class="chat-disclaimer">Réponses générées automatiquement à partir des annonces collectées. Les estimations sont indicatives.</p>
     </section>

@@ -105,10 +105,14 @@ def parse_booking_card(textes):
         return round(valeur / 1000, 3) if match.group(2) == "m" else valeur
 
     pension = next((code for libelle, code in PENSIONS if libelle in unite.lower()), None)
+    # Adresse affichée sur la carte ("Yasmine Hammamet", "Houmt Souk") : plus précise que
+    # la ville recherchée, utilisée par le géocodeur
+    adresse = re.sub(r"\s*Indiquer sur la carte\s*$", "", (textes.get("address") or "").strip()) or None
     front_de_mer = "front de mer" in card.lower()
 
     return {
         "nom":             (textes.get("title") or "").strip() or None,
+        "adresse_brute":   adresse,
         "prix_sejour":     prix_sejour,
         "nb_nuits":        nb_nuits,
         "prix_nuit":       round(prix_sejour / nb_nuits) if prix_sejour and nb_nuits else None,
@@ -132,7 +136,7 @@ def parse_booking_card(textes):
 async def _textes_carte(carte):
     textes = {"card": await carte.inner_text()}
     for testid in ["title", "price-and-discounted-price", "price-for-x-nights",
-                   "recommended-units", "review-score"]:
+                   "recommended-units", "review-score", "address"]:
         el = await carte.query_selector(f"[data-testid='{testid}']")
         textes[testid] = await el.inner_text() if el else None
     lien = await carte.query_selector("a[data-testid='title-link']")

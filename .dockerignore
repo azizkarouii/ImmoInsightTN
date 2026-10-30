@@ -1,0 +1,20 @@
+# Secrets : fournis au démarrage (env_file), jamais copiés dans l'image
+.env
+.env.*
+!.env.example
+
+.git
+.github
+frontend/
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+.venv/
+venv/
+logs/
+reports/
+notebooks/
+.tmp_*
+diag.py
+rapport.*
+*.log

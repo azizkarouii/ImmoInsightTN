@@ -92,7 +92,7 @@ def annonces_recentes(
 
 @router.get("/carte")
 def annonces_carte(
-    collection: str = Query("clean_vente", pattern="^(clean_vente|clean_estival)$"),
+    collection: str = Query("clean_vente", pattern="^(clean_vente|clean_location|clean_estival)$"),
     limit: int = Query(1000, ge=1, le=5000),
 ):
     query = {
@@ -103,7 +103,7 @@ def annonces_carte(
         db[collection]
         .find(query, {
             "_id": 0, "titre": 1, "prix": 1, "surface": 1,
-            "lat": 1, "lon": 1, "type_bien": 1, "url": 1,
+            "lat": 1, "lon": 1, "type_bien": 1, "categorie": 1, "url": 1,
             "prix_m2": 1, "fiabilite": 1,
             "dist_plages_km": 1, "dist_transports_km": 1,
             "quality_score": 1, "quality_label": 1, "nearest_poi_km": 1,
@@ -120,3 +120,21 @@ def annonces_carte(
 
     docs = sanitize_map_points(docs)
     return clean_doc({"total": len(docs), "data": docs})
+
+@router.get("/zones")
+def zones(
+    collection: str = Query("clean_vente", pattern="^(clean_vente|clean_location|clean_estival)$"),
+    min_annonces: int = Query(3, ge=1, le=100),
+):
+    """Villes, quartiers et gouvernorats présents dans les annonces (autocomplétion des formulaires)."""
+    compte = {}
+    for champ in ("ville", "gouvernorat"):
+        for r in db[collection].aggregate([
+            {"$match": {champ: {"$nin": [None, ""]}}},
+            {"$group": {"_id": f"${champ}", "n": {"$sum": 1}}},
+        ]):
+            nom = str(r["_id"]).strip()
+            if nom and not any(c.isdigit() for c in nom):
+                compte[nom] = max(compte.get(nom, 0), r["n"])
+    zones = sorted(((nom, n) for nom, n in compte.items() if n >= min_annonces), key=lambda z: (-z[1], z[0]))
+    return {"collection": collection, "zones": [{"nom": nom, "nb_annonces": n} for nom, n in zones]}

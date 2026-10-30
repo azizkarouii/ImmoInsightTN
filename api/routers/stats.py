@@ -6,6 +6,7 @@ from statistics import mean, median
 from collections import Counter
 import os
 from .. import clean_doc
+from etl.regions import ORDRE_REGIONS, region_de
 
 load_dotenv()
 router = APIRouter()
@@ -257,6 +258,25 @@ def stats_marche():
         compte = Counter(d.get(champ) for d in docs[seg] if d.get(champ))
         return dict(compte)
 
+    # Grandes régions : volumes par segment et médianes (au moins MIN_ZONE annonces)
+    def mediane_region(liste, valeur):
+        valeurs = [v for v in map(valeur, liste) if v is not None]
+        return round(median(valeurs), 1) if len(valeurs) >= MIN_ZONE else None
+
+    par_region = []
+    for region in ORDRE_REGIONS:
+        du_segment = {seg: [d for d in docs[seg] if region_de(d) == region] for seg in SEGMENTS_MARCHE}
+        if not any(du_segment.values()):
+            continue
+        par_region.append({
+            "region": region,
+            **{f"n_{seg}": len(liste) for seg, liste in du_segment.items()},
+            "prix_m2_vente": mediane_region(du_segment["vente"], prix_m2("vente")),
+            "prix_vente": mediane_region(du_segment["vente"], prix),
+            "loyer": mediane_region(du_segment["location"], prix),
+            "prix_nuit": mediane_region(du_segment["estival"], prix),
+        })
+
     loyer_m2_appart = _med(map(prix_m2("location"), appartements["location"]))
     prix_m2_appart = _med(map(prix_m2("vente"), appartements["vente"]))
     return clean_doc({
@@ -278,6 +298,14 @@ def stats_marche():
         "estival_par_type": _par_groupe(docs["estival"], lambda d: d.get("categorie"), prix, min_n=5, tri_par="median"),
         "types": {seg: types(seg) for seg in SEGMENTS_MARCHE},
         "rendement_par_ville": rendements[:12],
+        "par_region": par_region,
         "activite_quotidienne": list(activite.values()),
         "note_rendement": "Appartements uniquement : loyer médian × 12 / prix de vente médian, villes avec au moins 5 annonces de chaque.",
     })
+
+
+@router.get("/stats/qualite")
+def stats_qualite():
+    """Dernier rapport qualité de l'ETL (corrections, doublons, annonces écartées)."""
+    rapport = db["qualite_rapports"].find_one({}, {"_id": 0}, sort=[("date", -1)])
+    return clean_doc(rapport or {"date": None, "collections": {}})

@@ -162,8 +162,8 @@ interface Job {
           <p class="eyebrow">Automatisation</p>
           <h2>Collecte automatique</h2>
           <p class="section-copy">
-            Planning du scheduler (fuseau Africa/Tunis) et résultat des dernières exécutions.
-            Démarrage : <code>python -m scrapers.main --scheduler</code>
+            Les annonces sont mises à jour automatiquement : quand chaque source est consultée
+            et résultat des derniers passages.
           </p>
         </div>
         <div class="summary-pills">
@@ -172,7 +172,7 @@ interface Job {
       </div>
 
       <div *ngIf="schedulerInactif()" class="notice">
-        Aucune exécution planifiée depuis plus de 26 h : le scheduler ne semble pas démarré.
+        Aucune mise à jour depuis plus de 26 h : les annonces affichées peuvent ne pas être à jour.
       </div>
 
       <div class="table-wrap">
@@ -385,7 +385,7 @@ export class AlertsComponent implements OnInit {
         this.total = Number(res?.count ?? res?.total ?? this.rows.length);
         // Une API lancée avant l'ajout de la recherche ignore q/tri sans erreur
         this.avertissement = this.onglet === 'nouvelles' && res && res.tri === undefined
-          ? "L'API ne gère pas encore la recherche et le tri : redémarrez le serveur FastAPI (port 8000)."
+          ? "La recherche et le tri sont momentanément indisponibles."
           : null;
         this.loading = false;
       },

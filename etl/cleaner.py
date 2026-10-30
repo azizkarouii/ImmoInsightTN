@@ -5,6 +5,8 @@ from pymongo import MongoClient, ASCENDING
 from dotenv import load_dotenv
 import os
 
+from etl import qualite
+
 load_dotenv()
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
 MONGO_DB  = os.getenv("MONGO_DB", "immoinsight")
@@ -205,6 +207,9 @@ def clean_collection(collection_name):
     if "titre" in df.columns:
         df["titre"] = df["titre"].apply(clean_titre)
 
+    # Champs incohérents (chambres, surfaces) corrigés ou vidés, comptés dans le rapport qualité
+    df = qualite.corriger(df, collection_name)
+
     if "titre" in df.columns:
         df["titre_len"] = df["titre"].fillna("").astype(str).str.len()
     if "description" in df.columns:
@@ -268,17 +273,21 @@ def clean_collection(collection_name):
         residential = ["appartement", "villa", "maison", "duplex", "bungalow"]
         before = len(df)
         df = df[df["type_bien"].isin(residential)]
+        qualite.compter(collection_name, "non_residentiels_retires", before - len(df))
         print(f"  [CLEAN] {before - len(df)} non-residentiels supprimes")
 
     # Les locations mal classées faussent les prix de vente (loyers de 10 000 DT...)
     if "vente" in collection_name and "titre" in df.columns:
         before = len(df)
         df = df[~df["titre"].apply(is_rental_title)]
+        qualite.compter(collection_name, "locations_mal_classees_retirees", before - len(df))
         print(f"  [CLEAN] {before - len(df)} locations retirees de {collection_name}")
 
     # Filter outliers for vente
     if "vente" in collection_name:
+        before = len(df)
         df = df[(df["prix"].isna()) | ((df["prix"] >= 10000) & (df["prix"] <= 5000000))]
+        qualite.compter(collection_name, "prix_hors_norme_retires", before - len(df))
     elif "location" in collection_name and "estival" not in collection_name:
         before = len(df)
         # Loyers à la nuit / à la semaine publiés en location classique
@@ -288,6 +297,7 @@ def clean_collection(collection_name):
         if "surface" in df.columns:
             loyer_m2 = pd.to_numeric(df["prix"], errors="coerce") / pd.to_numeric(df["surface"], errors="coerce")
             df = df[loyer_m2.isna() | ((loyer_m2 >= LOYER_M2_MIN) & (loyer_m2 <= LOYER_M2_MAX))]
+        qualite.compter(collection_name, "prix_hors_norme_retires", before - len(df))
         print(f"  [CLEAN] {before - len(df)} loyers hors norme retires")
 
     # Booking renvoie aussi des chambres d'hôtel (pension) : seuls les logements
@@ -296,6 +306,7 @@ def clean_collection(collection_name):
         before = len(df)
         is_booking = df["source"].eq("booking")
         df = df[~is_booking | df["logement_entier"].eq(True)]
+        qualite.compter(collection_name, "chambres_hotel_retirees", before - len(df))
         print(f"  [CLEAN] {before - len(df)} chambres d'hotel / types inconnus retires")
 
     # Remove entries without price
@@ -304,7 +315,9 @@ def clean_collection(collection_name):
     # Annonces retirées (vérifiées hors ligne) : gardées dans raw_* pour les alertes,
     # exclues des statistiques et des modèles
     if "status" in df.columns:
+        before = len(df)
         df = df[df["status"].ne("supprime")]
+        qualite.compter(collection_name, "annonces_retirees_exclues", before - len(df))
 
     # Historique de prix : mêmes bornes que les prix (les erreurs de scraping, ex.
     # prix x1000, produisaient de fausses variations de prix)

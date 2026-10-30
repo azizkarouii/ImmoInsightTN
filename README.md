@@ -27,9 +27,64 @@ Configuration : copier `.env.example` en `.env` (`MONGO_URI`, `MONGO_DB`, `GROQ_
 ## Lancer l'application
 
 ```bash
-py -3.13 -m uvicorn api.main:app --port 8000      # API  → http://localhost:8000/docs
+py -3.13 -m uvicorn api.main:app --port 8000 --reload --reload-dir api --reload-dir models --reload-dir etl --reload-dir scrapers
+                                                    # API  → http://localhost:8000/docs (rechargée à chaque modification)
 cd frontend && npx ng serve                         # UI   → http://localhost:4200
 ```
+
+## Lancer avec Docker
+
+Toute la stack (MongoDB, API, scheduler, interface servie par nginx) en une commande :
+
+```bash
+cp .env.example .env               # GROQ_API_KEY pour l'assistant (lu au démarrage, jamais copié dans l'image)
+docker compose up -d --build       # interface → http://localhost:8080 , API → http://localhost:8000/docs
+docker compose logs -f scheduler   # suivre la collecte
+docker compose down                # arrêter (les données restent dans le volume mongo-data)
+```
+
+| Service | Rôle |
+|---|---|
+| `mongo` | MongoDB 7, données dans le volume `mongo-data` |
+| `api` | FastAPI (image `immoinsight-backend`, Python 3.13 + Chromium pour Booking) |
+| `scheduler` | Même image, `python -m scrapers.main --scheduler` (collectes, ETL, ré-entraînement) |
+| `frontend` | Build Angular de production servi par nginx, qui relaie `/api` vers l'API (même origine) |
+
+Les modèles entraînés (`models/*/artifacts`) et le cache de géocodage (`data/`) sont montés depuis le dossier du
+projet. Pour reprendre la base locale existante dans le conteneur :
+
+```bash
+docker run --rm mongo:7 mongodump --uri "mongodb://host.docker.internal:27017/immoinsight" --archive --gzip \
+  | docker compose exec -T mongo mongorestore --archive --gzip --drop
+```
+
+Sans base existante, lancer une première collecte puis le traitement (ou attendre le planning) :
+`docker compose exec scheduler python -m scrapers.main job tayara_complet`, puis `… job etl` et `… job entrainement`.
+
+## Intégration continue
+
+`.github/workflows/ci.yml`, à chaque push et pull request :
+
+1. **Backend** : installation de `requirements.txt`, import de l'API (démarre sans base, sans modèles ni clé), puis
+   `pytest`. Sans MongoDB, les tests d'intégration sont ignorés automatiquement ; les tests unitaires (qualité des
+   données, middleware, outils de l'assistant…) tournent.
+2. **Frontend** : `npm ci` puis build Angular de production (erreurs de template et budgets de taille).
+3. **Docker** (push uniquement, si 1 et 2 passent) : construction des images de `docker-compose.yml`.
+
+## Qualité des données
+
+Le pipeline ETL corrige plutôt que de supprimer : un champ incohérent est vidé ou repris du titre, l'annonce reste.
+
+| Contrôle | Règle |
+|---|---|
+| Chambres aberrantes | plus de 10, ou moins de 9 m² par chambre → valeur du titre (« S+3 ») ou vide |
+| Surface incohérente | prix au m² hors bornes (vente 200–15 000 TND/m², location 2–80 TND/m²/mois) → surface vidée |
+| Doublons | même URL ; même bien (prix, surface, ville, chambres) publié plusieurs fois, la fiche la plus complète est gardée ; texte quasi identique (MinHash, descriptions ≥ 80 caractères) |
+| Hors périmètre | terrains et locaux, locations publiées en vente, chambres d'hôtel, annonces retirées |
+
+Chaque exécution enregistre un rapport dans `qualite_rapports` (`GET /api/stats/qualite`), affiché dans
+l'onglet Statistiques. Les scrapers Mubawab et Tayara mettent la collecte en pause sur une réponse 429/503
+(`scrapers/middlewares.py`, délai `Retry-After` ou croissant jusqu'à 10 min) au lieu d'abandonner les pages.
 
 ## Collecte automatique
 
@@ -44,6 +99,7 @@ py -3.13 -m scrapers.main job etl       # lancer un job maintenant (journalisé)
 | Tayara — nouvelles annonces (s'arrête aux annonces déjà connues) | tous les jours 02:00 |
 | Tayara — passage complet (détecte les changements de prix) | dimanche 01:00 |
 | Mubawab — 3 pages par catégorie (le site limite le débit) | lundi et jeudi 03:00 |
+| Mubawab — re-visite des annonces sans prix (prix sur demande, lecture échouée) | samedi 03:00 |
 | Booking — appartements, maisons, villas de 24 villes | mardi et vendredi 04:00 |
 | Vérification des retraits (re-visite des annonces non revues depuis 14 j) | tous les jours 06:00 |
 | Pipeline ETL (+ fiabilité M4, opportunités) | tous les jours 06:45 |

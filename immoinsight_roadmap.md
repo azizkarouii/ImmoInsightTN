@@ -1931,4 +1931,58 @@ second modèle, cache 15 min des questions sans historique (suggestions), limite
 
 **Tests** : 26 tests dédiés (outils sur la base réelle, agent et endpoint avec LLM simulé) — 130 au total.
 
-*Document maintenu par Mohamed Aziz Karoui — ImmoInsight TN — 2025 — Mise à jour Juillet 2026*
+### 17.17 Mise à jour Octobre 2026 — Qualité des données, Docker, CI et ergonomie
+
+**Qualité des données** (`etl/qualite.py`, `etl/deduplicator.py`). Audit : 17 ventes à plus de 10 chambres (prix
+lu comme nombre de chambres), 10 prix au m² impossibles, 25 groupes de doublons en vente et 57 en location (même
+bien republié), et l'estival sur-dédupliqué (descriptions Booking courtes et similaires).
+- Corrections plutôt que suppressions : chambres aberrantes reprises du titre (« S+3 ») ou vidées, chambres
+  complétées depuis le titre, nombre de pièces > 15 vidé, surface vidée si le prix au m² sort des bornes
+  (vente 200–15 000, location 2–80 TND/m²).
+- Déduplication en trois passes : URL (version la plus récente), même bien (prix, surface, ville, chambres : fiche la
+  plus complète gardée, URLs des doublons conservées dans `doublons`), texte quasi identique (MinHash, seulement si
+  description ≥ 80 caractères). Estival : URL uniquement. Résultat : vente 1 269 → 1 141, location 1 378 → 1 275,
+  estival 673 → 798 logements (faux doublons rétablis).
+- Rapport par exécution dans `qualite_rapports` (`GET /api/stats/qualite`), affiché dans Statistiques.
+- Collecte : `scrapers/middlewares.py` met Scrapy en pause sur 429/503 (`Retry-After` ou 30 s × 2ⁿ, 10 min max,
+  5 tentatives) ; Mubawab ralenti (1 requête à la fois, 2,5 s) ; job `mubawab_refresh` le samedi ; adresse Booking
+  conservée pour le géocodage.
+
+**Docker** : `Dockerfile` (Python 3.13 slim + Chromium Playwright, une image pour l'API et le scheduler),
+`frontend/Dockerfile` (build Angular → nginx, `/api` relayé : même origine, pas de CORS), `docker-compose.yml`
+(mongo, api, scheduler, frontend ; `.env` lu à l'exécution, jamais dans l'image ; modèles et cache montés).
+L'URL de l'API vient des environnements Angular (`''` en production, `http://localhost:8000` avec `ng serve`) ;
+l'API lit l'IP réelle du visiteur derrière nginx (`TRUST_PROXY=1`) pour la limite de l'assistant. Vérifié : stack
+démarrée, base copiée par `mongodump | mongorestore` (11 419 documents), interface et API fonctionnelles via nginx.
+
+**CI** (`.github/workflows/ci.yml`) : tests Python sans MongoDB (tests d'intégration ignorés, fixture de détection
+de la base mise en cache : 105 s → 15 s), build Angular de production, construction des images Docker sur push.
+
+**Ergonomie du frontend**
+- Estimation refaite : onglets Prix de vente / Loyer / Estival / Rentabilité, formulaire et résultat côte à côte,
+  autocomplétion des villes et quartiers (`GET /api/annonces/zones`), chambres en S+n, choix par boutons, validation
+  en ligne, fourchette visualisée, erreur typique du modèle (`erreur_mediane_pct` renvoyé par les endpoints
+  d'estimation), zone reconnue ou non signalée, enchaînement « utiliser ce prix / ce loyer pour la rentabilité »,
+  formulaires conservés pendant la session. Le classement `/api/roi/top_zones` (zones à 1 annonce, rendements de
+  43 %) est remplacé par le rendement brut par ville de `/api/stats/marche`, avec un bouton « Simuler ».
+- Carte : couche Location ajoutée (1 273 annonces géolocalisées jusque-là invisibles), filtres type / chambres /
+  budget, légende des couleurs (mêmes teintes que les graphiques), message si aucun résultat.
+- Navigation : onglet courant dans l'URL (`#stats`, rechargement et bouton Précédent), barre de navigation rapide
+  dans Statistiques, « nouvelles en 24 h » mène aux Alertes, page en français (`lang="fr"`, titre), bandeau d'onglets
+  sans défilement horizontal sur téléphone.
+- Alertes : recherche et tri des nouvelles annonces côté serveur, tableau estompé pendant la mise à jour (plus de
+  clignotement). Statistiques : 14 graphiques avec vue « Données » ; avertissement si l'API lancée est trop ancienne.
+
+- Statistiques par région (`etl/regions.py`) : chaque annonce est rattachée à l'une des 9 régions (Grand Tunis, Cap Bon,
+  Sahel, Sfax, Nord-Est, Nord-Ouest, Centre-Ouest, Sud-Est, Sud-Ouest) via une table ville/quartier → gouvernorat
+  → région (le champ « gouvernorat » contient souvent une ville) ; 99 % des annonces classées (les autres n'ont aucune
+  localisation). `par_region` dans `/api/stats/marche` : volumes par segment et médianes (≥ 8 annonces) du prix au m²,
+  du prix de vente, du loyer et du prix par nuit, affichés dans une nouvelle section « Par région ».
+- Provenance des données : part de chaque site (Tayara, Mubawab, Booking) au total et par segment, en pourcentage
+  (l'ancien graphique en nombres ignorait la location).
+- Textes techniques retirés de l'interface (commandes de lancement, « scheduler », « FastAPI ») au profit de messages
+  destinés aux visiteurs.
+
+**Tests** : 183 (dont tests qualité / middleware, carte, zones et régions).
+
+*Document maintenu par Mohamed Aziz Karoui — ImmoInsight TN — 2025 — Mise à jour Octobre 2026*

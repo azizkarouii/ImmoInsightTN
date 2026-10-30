@@ -5,6 +5,7 @@ from urllib.parse import unquote
 import scrapy
 from scrapy.crawler import CrawlerProcess
 from .utils import get_db, clean_prix, clean_surface, clean_int, upsert_annonce
+from .middlewares import REGLAGES_LIMITE
 
 GOUVERNORATS = [
     "tunis", "ariana", "ben-arous", "manouba",
@@ -88,17 +89,21 @@ class MubawabSpider(scrapy.Spider):
         + [f"https://www.mubawab.tn/fr/st/{city}/{slug}" for city in CITIES for slug in ST_SLUGS]
     )
 
+    # Mubawab limite le débit (429) : une requête à la fois, délai plus long,
+    # pause adaptative sur 429 (scrapers.middlewares)
     custom_settings = {
-        "DOWNLOAD_DELAY": 1.5,
+        "DOWNLOAD_DELAY": 2.5,
         "RANDOMIZE_DOWNLOAD_DELAY": True,
         "USER_AGENT": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "ROBOTSTXT_OBEY": False,
         "LOG_LEVEL": "WARNING",
-        "CONCURRENT_REQUESTS": 2,
+        "CONCURRENT_REQUESTS": 1,
         "AUTOTHROTTLE_ENABLED": True,
-        "AUTOTHROTTLE_START_DELAY": 1.0,
-        "AUTOTHROTTLE_MAX_DELAY": 8.0,
+        "AUTOTHROTTLE_START_DELAY": 2.5,
+        "AUTOTHROTTLE_MAX_DELAY": 30.0,
+        "AUTOTHROTTLE_TARGET_CONCURRENCY": 0.5,
         "COOKIES_ENABLED": False,
+        **REGLAGES_LIMITE,
     }
 
     def __init__(self, start_urls=None, annonces=None, max_pages=None, *args, **kwargs):

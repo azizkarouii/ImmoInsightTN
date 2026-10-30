@@ -1,4 +1,4 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, HostListener, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { API_BASE } from './api.config';
@@ -22,8 +22,8 @@ import { ChatWidgetComponent } from './chat-widget.component';
             <span class="subtitle">Vente, location et estival en Tunisie</span>
           </div>
         </div>
-        <nav class="nav-tabs">
-          <button *ngFor="let t of tabs" [class.active]="currentTab === t.id" (click)="currentTab = t.id">
+        <nav class="nav-tabs" aria-label="Sections">
+          <button *ngFor="let t of tabs" [class.active]="currentTab === t.id" [attr.aria-current]="currentTab === t.id ? 'page' : null" (click)="ouvrir(t.id)">
             {{ t.label }}
             <span *ngIf="t.id === 'alertes' && nouveautes24h" class="nav-badge" title="Nouvelles annonces (24 h)">{{ badge(nouveautes24h) }}</span>
           </button>
@@ -33,7 +33,7 @@ import { ChatWidgetComponent } from './chat-widget.component';
       <main class="main-content">
         <div class="status-strip">
           <span><strong>{{ totalAnnonces !== null ? (totalAnnonces | number) : '—' }}</strong> annonces analysées</span>
-          <span><strong>{{ nouveautes24h ?? '—' }}</strong> nouvelles en 24 h</span>
+          <button type="button" class="strip-lien" (click)="ouvrir('alertes')" title="Voir les nouvelles annonces"><strong>{{ nouveautes24h ?? '—' }}</strong> nouvelles en 24 h →</button>
           <span><span class="dot" [class.ok]="collecteRecente" [class.warn]="!collecteRecente"></span>
             Dernière collecte : <strong>{{ derniereCollecte || 'aucune' }}</strong></span>
           <span *ngIf="prochaineCollecte">Prochaine : <strong>{{ prochaineCollecte }}</strong></span>
@@ -70,7 +70,23 @@ export class AppComponent implements OnInit {
 
   constructor(private http: HttpClient) {}
 
+  /** Onglet courant dans l'URL (#stats…) : rechargement, favoris et bouton Précédent conservent la section. */
+  ouvrir(id: string): void {
+    if (this.currentTab === id) return;
+    this.currentTab = id;
+    history.pushState(null, '', '#' + id);
+    window.scrollTo({ top: 0 });
+  }
+
+  @HostListener('window:popstate')
+  @HostListener('window:hashchange')
+  lireHash(): void {
+    const id = location.hash.slice(1);
+    this.currentTab = this.tabs.some(t => t.id === id) ? id : 'carte';
+  }
+
   ngOnInit(): void {
+    this.lireHash();
     this.http.get<any>(API_BASE + '/api/stats').subscribe({
       next: s => this.totalAnnonces = s?.total_annonces ?? null,
       error: () => this.totalAnnonces = null,

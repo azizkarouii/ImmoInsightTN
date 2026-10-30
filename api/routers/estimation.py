@@ -7,6 +7,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 router = APIRouter()
 
 
+def _erreur_typique(chemin, cle):
+    """Erreur médiane mesurée en validation croisée (affichée à côté de l'estimation)."""
+    from api.chat.tools import _erreur_typique as lire
+    return lire(chemin, cle)
+
+
 def _model_unavailable(model, exc):
     # Artefacts absents (dossiers artifacts/ non versionnés) : modèle à ré-entraîner
     return HTTPException(
@@ -41,7 +47,7 @@ def estimer_vente(
         result = predict_one(annonce)
     except FileNotFoundError as e:
         raise _model_unavailable("m1_avm_vente", e)
-    return {"statut": "succes", **result}
+    return {"statut": "succes", **result, "erreur_mediane_pct": _erreur_typique("m1_avm_vente/artifacts/metrics.json", "erreur_mediane_pct")}
 
 
 @router.get("/location/estimation")
@@ -70,7 +76,7 @@ def estimer_location(
         result = predict_one(annonce)
     except FileNotFoundError as e:
         raise _model_unavailable("m2_loyer_classique", e)
-    return {"statut": "succes", **result}
+    return {"statut": "succes", **result, "erreur_mediane_pct": _erreur_typique("m2_loyer_classique/artifacts/metrics.json", "cv.modele.erreur_mediane_pct")}
 
 
 @router.get("/estival/estimation")
@@ -93,7 +99,7 @@ def estimer_estival(
         raise HTTPException(status_code=422, detail=str(e))
     except FileNotFoundError as e:
         raise _model_unavailable("m3_pricing_estival", e)
-    return {"statut": "succes", **result}
+    return {"statut": "succes", **result, "erreur_mediane_pct": _erreur_typique("m3_pricing_estival/artifacts/metrics.json", "cv.modele.erreur_mediane_pct")}
 
 
 @router.get("/estival/villes")

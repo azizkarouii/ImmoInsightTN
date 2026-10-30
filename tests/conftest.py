@@ -11,9 +11,10 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "mongo: tests requiring a local MongoDB")
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def mongo_available():
-    """Skip si MongoDB local n'est pas joignable."""
+    """MongoDB local joignable ? (testé une seule fois par session : sans base, comme
+    en CI, chaque test réessayait la connexion et la suite prenait près de 2 minutes)"""
     try:
         from pymongo import MongoClient
         from dotenv import load_dotenv

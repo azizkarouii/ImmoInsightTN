@@ -2,6 +2,7 @@ import { API_BASE } from './api.config';
 import { Component, AfterViewInit, OnDestroy } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { CommonModule } from '@angular/common';
+import { FormsModule } from '@angular/forms';
 import { Subscription } from 'rxjs';
 import L from 'leaflet';
 import 'leaflet.heat';
@@ -11,10 +12,22 @@ import 'leaflet.markercluster';
 // (ville, quartier, délégation...) la position affichée est le centre de la zone.
 const PRECISE_GEO_TYPES = new Set(['house', 'building', 'apartments', 'residential', 'street', 'road', 'address']);
 
+// Couleurs par type de bien : mêmes teintes que les graphiques de l'onglet Statistiques
+const TYPES: Record<string, { libelle: string; couleur: string }> = {
+  appartement: { libelle: 'Appartement', couleur: '#6250d6' },
+  villa: { libelle: 'Villa', couleur: '#eda100' },
+  maison_vacances: { libelle: 'Maison de vacances', couleur: '#e87ba4' },
+  autre: { libelle: 'Non précisé', couleur: '#8a94a6' },
+};
+const typeDe = (i: any): string => {
+  const t = String(i.categorie || i.type_bien || '').toLowerCase();
+  return TYPES[t] ? t : 'autre';
+};
+
 @Component({
   selector: 'app-map',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, FormsModule],
   template: `
     <div class="card map-wrapper">
       <div class="section-head" style="padding:18px 16px 0 16px;margin-bottom:0;align-items:center">
@@ -25,8 +38,8 @@ const PRECISE_GEO_TYPES = new Set(['house', 'building', 'apartments', 'residenti
         </div>
         <div class="summary-pills">
           <div class="summary-pill"><strong>{{ totalCount }}</strong> annonces géolocalisées</div>
+          <div class="summary-pill"><strong>{{ filtresActifs ? shown.length : totalCount }}</strong> après filtres</div>
           <div class="summary-pill"><strong>{{ visibleCount }}</strong> dans la vue</div>
-          <div class="summary-pill"><strong>{{ mode === 'heat' ? 'Heatmap' : 'Marqueurs' }}</strong> actif</div>
         </div>
       </div>
 
@@ -43,9 +56,28 @@ const PRECISE_GEO_TYPES = new Set(['house', 'building', 'apartments', 'residenti
         <button class="mode-btn"
                 [class.active]="mode === 'markers'"
                 (click)="setMode('markers')">📍 Marqueurs</button>
-        <span style="font-size:0.8rem;color:var(--text-light)">
+        <span class="map-etat" [class.erreur]="error">
           {{ loading ? 'Chargement…' : error ? error : visibleCount + ' dans la vue' }}
         </span>
+      </div>
+
+      <div class="map-filtres">
+        <div class="choix" role="group" aria-label="Filtrer par type de bien">
+          <button type="button" *ngFor="let t of typesPresents" [class.actif]="typesActifs.has(t)" (click)="basculerType(t)"
+                  [attr.aria-pressed]="typesActifs.has(t)">
+            <span class="pastille" [style.background]="couleur(t)"></span>{{ libelle(t) }} <small>{{ compteType[t] }}</small>
+          </button>
+        </div>
+        <label class="map-filtre">Chambres
+          <select [(ngModel)]="chambresMin" (ngModelChange)="appliquerFiltres()">
+            <option [ngValue]="0">Toutes</option>
+            <option *ngFor="let n of [1,2,3,4,5]" [ngValue]="n">{{ n }} et +</option>
+          </select>
+        </label>
+        <label class="map-filtre">{{ budgetLibelle }}
+          <input type="number" min="0" [step]="budgetPas" [(ngModel)]="prixMax" (ngModelChange)="appliquerFiltres()" placeholder="illimité" />
+        </label>
+        <button type="button" class="btn-lien" *ngIf="filtresActifs" (click)="effacerFiltres()">Effacer les filtres</button>
       </div>
       <div class="map-stage">
         <div id="map"></div>
@@ -54,19 +86,31 @@ const PRECISE_GEO_TYPES = new Set(['house', 'building', 'apartments', 'residenti
           <span class="gradient-bar"></span>
           <span>{{ heatLabel }} élevé</span>
         </div>
+        <div class="map-legend map-legend-types" *ngIf="mode === 'markers' && typesPresents.length">
+          <span *ngFor="let t of typesPresents"><span class="pastille" [style.background]="couleur(t)"></span>{{ libelle(t) }}</span>
+        </div>
+        <div class="map-vide" *ngIf="!loading && !error && filtresActifs && !shown.length">
+          Aucune annonce ne correspond aux filtres. <button type="button" class="btn-lien" (click)="effacerFiltres()">Effacer les filtres</button>
+        </div>
       </div>
     </div>
   `,
   styles: []
 })
 export class MapComponent implements AfterViewInit, OnDestroy {
-  collections = ['clean_vente', 'clean_estival'];
+  collections = ['clean_vente', 'clean_location', 'clean_estival'];
   selectedCollection = 'clean_vente';
   mode: 'markers' | 'heat' = 'markers';
   loading = false;
   error: string | null = null;
   totalCount = 0;
   visibleCount = 0;
+  shown: any[] = [];
+  typesPresents: string[] = [];
+  compteType: Record<string, number> = {};
+  typesActifs = new Set<string>();
+  chambresMin = 0;
+  prixMax: number | null = null;
 
   private readonly tunisiaCenter: L.LatLngExpression = [34.0, 9.5];
   private readonly tunisiaBounds = L.latLngBounds([
@@ -82,7 +126,44 @@ export class MapComponent implements AfterViewInit, OnDestroy {
   constructor(private http: HttpClient) {}
 
   get heatLabel(): string {
-    return this.selectedCollection === 'clean_estival' ? 'Prix/nuit' : 'Prix/m²';
+    return ({ clean_estival: 'Prix/nuit', clean_location: 'Loyer/m²' } as Record<string, string>)[this.selectedCollection] || 'Prix/m²';
+  }
+
+  get budgetLibelle(): string {
+    return ({ clean_estival: 'Prix max / nuit', clean_location: 'Loyer max / mois' } as Record<string, string>)[this.selectedCollection] || 'Prix max (TND)';
+  }
+
+  get budgetPas(): number {
+    return ({ clean_estival: 50, clean_location: 100 } as Record<string, number>)[this.selectedCollection] || 10000;
+  }
+
+  get filtresActifs(): boolean {
+    return this.typesActifs.size > 0 || this.chambresMin > 0 || !!this.prixMax;
+  }
+
+  couleur(t: string): string { return TYPES[t].couleur; }
+  libelle(t: string): string { return TYPES[t].libelle; }
+
+  basculerType(t: string): void {
+    if (this.typesActifs.has(t)) this.typesActifs.delete(t); else this.typesActifs.add(t);
+    this.appliquerFiltres();
+  }
+
+  effacerFiltres(): void {
+    this.typesActifs.clear();
+    this.chambresMin = 0;
+    this.prixMax = null;
+    this.appliquerFiltres();
+  }
+
+  /** Filtrage local : les données sont déjà chargées, la vue de carte n'est pas recadrée. */
+  appliquerFiltres(fit = false): void {
+    const max = Number(this.prixMax) || 0;
+    this.shown = this.items.filter(i =>
+      (!this.typesActifs.size || this.typesActifs.has(typeDe(i))) &&
+      (!this.chambresMin || Number(i.nb_chambres) >= this.chambresMin) &&
+      (!max || (Number(i.prix) > 0 && Number(i.prix) <= max)));
+    this.render(fit);
   }
 
   ngAfterViewInit(): void {
@@ -122,6 +203,11 @@ export class MapComponent implements AfterViewInit, OnDestroy {
   }
 
   loadMarkers(collection: string): void {
+    if (collection !== this.selectedCollection) {
+      // Les budgets ne sont pas comparables d'un segment à l'autre (prix, loyer, nuitée)
+      this.prixMax = null;
+      this.typesActifs.clear();
+    }
     this.selectedCollection = collection;
     this.fetchItems();
   }
@@ -134,7 +220,7 @@ export class MapComponent implements AfterViewInit, OnDestroy {
   }
 
   collectionLabel(collection: string): string {
-    return collection === 'clean_vente' ? 'Vente' : 'Estival';
+    return ({ clean_vente: 'Vente', clean_location: 'Location', clean_estival: 'Estival' } as Record<string, string>)[collection] || collection;
   }
 
   private fetchItems(): void {
@@ -154,17 +240,26 @@ export class MapComponent implements AfterViewInit, OnDestroy {
             .map(i => ({ ...i, lat: Number(i.lat), lon: Number(i.lon) }))
             .filter(i => Number.isFinite(i.lat) && Number.isFinite(i.lon));
           this.totalCount = this.items.length;
+          this.majTypes();
           this.loading = false;
-          this.render(true);
+          this.appliquerFiltres(true);
         },
         error: () => {
           this.items = [];
           this.totalCount = 0;
+          this.majTypes();
           this.loading = false;
-          this.error = 'API indisponible';
-          this.render(true);
+          this.error = 'Données momentanément indisponibles';
+          this.appliquerFiltres(true);
         },
       });
+  }
+
+  private majTypes(): void {
+    this.compteType = {};
+    for (const i of this.items) this.compteType[typeDe(i)] = (this.compteType[typeDe(i)] || 0) + 1;
+    this.typesPresents = Object.keys(TYPES).filter(t => this.compteType[t]);
+    [...this.typesActifs].forEach(t => { if (!this.compteType[t]) this.typesActifs.delete(t); });
   }
 
   private clearLayers(): void {
@@ -189,7 +284,7 @@ export class MapComponent implements AfterViewInit, OnDestroy {
     }
 
     if (fit) {
-      const bounds = L.latLngBounds(this.items.map(i => [i.lat, i.lon] as [number, number]));
+      const bounds = L.latLngBounds(this.shown.map(i => [i.lat, i.lon] as [number, number]));
       if (bounds.isValid()) {
         this.map.fitBounds(bounds.pad(0.05), { maxZoom: 12 });
       } else {
@@ -200,14 +295,6 @@ export class MapComponent implements AfterViewInit, OnDestroy {
   }
 
   private renderMarkers(): void {
-    const colorMap: Record<string, string> = {
-      appartement: '#1a237e',
-      villa: '#2e7d32',
-      terrain: '#e65100',
-      local_commercial: '#6a1b9a',
-      bureau: '#00838f',
-    };
-
     // Plusieurs annonces partagent souvent la même position (géocodage au niveau
     // ville/quartier) : le clustering les regroupe et les déploie au zoom max
     // au lieu de les décaler artificiellement.
@@ -217,8 +304,8 @@ export class MapComponent implements AfterViewInit, OnDestroy {
       maxClusterRadius: 40,
     });
 
-    for (const item of this.items) {
-      const color = colorMap[String(item.type_bien || '').toLowerCase()] || '#9e9e9e';
+    for (const item of this.shown) {
+      const color = TYPES[typeDe(item)].couleur;
       const marker = L.circleMarker([item.lat, item.lon], {
         radius: 7,
         fillColor: color,
@@ -235,7 +322,7 @@ export class MapComponent implements AfterViewInit, OnDestroy {
   }
 
   private renderHeat(): void {
-    if (!this.items.length) return;
+    if (!this.shown.length) return;
 
     // Vente : prix/m² ; estival : prix/nuit (pas de surface)
     const value = (i: any): number | null => {
@@ -248,12 +335,12 @@ export class MapComponent implements AfterViewInit, OnDestroy {
 
     // Normalisation par percentiles du jeu courant : l'ancien diviseur fixe
     // (prix/m² / 2000) saturait presque tous les points au rouge.
-    const values = this.items.map(value).filter((v): v is number => v !== null).sort((a, b) => a - b);
+    const values = this.shown.map(value).filter((v): v is number => v !== null).sort((a, b) => a - b);
     const lo = values.length ? values[Math.floor(values.length * 0.05)] : 0;
     const hi = values.length ? values[Math.floor((values.length - 1) * 0.95)] : 1;
     const span = hi > lo ? hi - lo : 1;
 
-    const points: [number, number, number][] = this.items.map(i => {
+    const points: [number, number, number][] = this.shown.map(i => {
       const v = value(i);
       const intensity = v === null ? 0.3 : Math.min(1, Math.max(0.05, (v - lo) / span));
       return [i.lat, i.lon, intensity];
@@ -281,14 +368,14 @@ export class MapComponent implements AfterViewInit, OnDestroy {
       return;
     }
     const bounds = this.map.getBounds();
-    this.visibleCount = this.items.filter(i => bounds.contains([i.lat, i.lon])).length;
+    this.visibleCount = this.shown.filter(i => bounds.contains([i.lat, i.lon])).length;
   }
 
   private popupHtml(item: any): string {
     const esc = (value: unknown): string =>
       String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 
-    const prixUnit = this.selectedCollection === 'clean_estival' ? ' TND/nuit' : ' TND';
+    const prixUnit = ({ clean_estival: ' TND/nuit', clean_location: ' TND/mois' } as Record<string, string>)[this.selectedCollection] || ' TND';
     const prix = item.prix ? Number(item.prix).toLocaleString('fr-FR') + prixUnit : 'N/A';
     const surface = item.surface ? item.surface + ' m²' : 'N/A';
     const lieu = [item.ville, item.gouvernorat]
@@ -306,7 +393,8 @@ export class MapComponent implements AfterViewInit, OnDestroy {
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:0.85rem">
           <span>💰 ${esc(prix)}</span>
           <span>📐 ${esc(surface)}</span>
-          <span>🏷️ ${esc(item.type_bien || 'N/A')}</span>
+          <span>🏷️ ${esc(TYPES[typeDe(item)].libelle)}</span>
+          <span>🛏️ ${item.nb_chambres ? esc(item.nb_chambres) + ' ch.' : 'N/A'}</span>
           <span>📍 ${esc(lieu)}</span>
         </div>
         ${approx}

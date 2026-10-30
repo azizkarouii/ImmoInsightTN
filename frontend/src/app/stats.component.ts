@@ -14,6 +14,30 @@ const ENCRE = '#526173';
 const GRILLE = 'rgba(18, 32, 54, 0.07)';
 const LIBELLE_TYPE: Record<string, string> = { appartement: 'Appartement', villa: 'Villa / maison', maison_vacances: 'Maison de vacances' };
 const LIBELLE_SEGMENT: Record<string, string> = { vente: 'Vente', location: 'Location', estival: 'Estival' };
+// Sources : rouge et vert jamais adjacents dans la barre empilée (séparés par le bleu), pourcentages écrits sur les barres
+const SOURCE: Record<string, string> = { tayara: '#e34948', mubawab: '#184f95', booking: '#008300' };
+const AUTRE_SOURCE = '#8a94a6';
+
+/** Écrit la valeur au centre de chaque segment assez large (barres empilées horizontales). */
+const etiquettesSegments = {
+  id: 'etiquettesSegments',
+  afterDatasetsDraw(chart: any) {
+    const ctx = chart.ctx;
+    ctx.save();
+    ctx.font = '600 11px Inter, system-ui, sans-serif';
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    chart.data.datasets.forEach((ds: any, i: number) => {
+      if (!chart.isDatasetVisible(i)) return;
+      chart.getDatasetMeta(i).data.forEach((barre: any, j: number) => {
+        const v = Number(ds.data[j]);
+        if (v && Math.abs(barre.x - barre.base) >= 28) ctx.fillText(`${Math.round(v)} %`, (barre.x + barre.base) / 2, barre.y);
+      });
+    });
+    ctx.restore();
+  },
+};
 
 interface Graphique {
   id: string;
@@ -68,7 +92,12 @@ const nf = (v: number, d = 0) => Number(v).toLocaleString('fr-FR', { maximumFrac
       </div>
     </div>
 
-    <section class="stats-section" *ngFor="let s of sections">
+    <nav class="stats-nav" aria-label="Aller à une section">
+      <button type="button" *ngFor="let s of sections" (click)="allerA(s.id)">{{ s.titre }}</button>
+      <button type="button" (click)="allerA('qualite')">Qualité des données</button>
+    </nav>
+
+    <section class="stats-section" *ngFor="let s of sections" [id]="'stats-' + s.id">
       <div class="stats-section-head">
         <h3>{{ s.titre }}</h3>
         <p>{{ s.description }}</p>
@@ -94,6 +123,35 @@ const nf = (v: number, d = 0) => Number(v).toLocaleString('fr-FR', { maximumFrac
         </div>
       </div>
     </section>
+
+    <section class="stats-section" id="stats-qualite">
+      <div class="stats-section-head">
+        <h3>Qualité des données</h3>
+        <p>Ce que le nettoyage a corrigé ou écarté lors du dernier traitement{{ qualite?.date ? ' (' + (qualite.date | date:'d MMM y, HH:mm') + ')' : '' }}.
+          Les champs incohérents sont vidés plutôt que de supprimer l'annonce.</p>
+      </div>
+      <div class="card" *ngIf="qualiteLignes.length; else qualiteVide">
+        <div class="qualite-entonnoir">
+          <div *ngFor="let c of qualiteColonnes" class="qualite-seg">
+            <span class="qualite-seg-nom"><span class="pastille" [style.background]="c.couleur"></span>{{ c.libelle }}</span>
+            <strong>{{ c.propres | number }}</strong> <span class="muted">annonces retenues sur {{ c.brutes | number }} collectées</span>
+            <div class="qualite-barre"><span [style.width.%]="c.part" [style.background]="c.couleur"></span></div>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="qualite-table">
+            <thead><tr><th>Contrôle</th><th *ngFor="let c of qualiteColonnes">{{ c.libelle }}</th></tr></thead>
+            <tbody>
+              <tr *ngFor="let l of qualiteLignes">
+                <td>{{ l.libelle }}<div class="muted small" *ngIf="l.aide">{{ l.aide }}</div></td>
+                <td *ngFor="let v of l.valeurs">{{ v === null ? '—' : (v | number) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <ng-template #qualiteVide><div class="card muted">Aucun rapport de qualité disponible pour le moment.</div></ng-template>
+    </section>
   `,
   styles: []
 })
@@ -109,6 +167,7 @@ export class StatsComponent implements OnInit, AfterViewInit, OnDestroy {
   kpis: { libelle: string; valeur: string; aide?: string }[] = [];
 
   sections = [
+    { id: 'regions', titre: 'Par région', description: 'Chaque annonce est rattachée à sa région (Grand Tunis, Cap Bon, Sahel…) à partir de sa ville ou de son gouvernorat. Médianes affichées à partir de 8 annonces.' },
     { id: 'vente', titre: 'Vente', description: 'Niveau des prix à l\'achat selon la localisation.' },
     { id: 'location', titre: 'Location à l\'année', description: 'Loyers mensuels observés dans les annonces.' },
     { id: 'taille', titre: 'Selon la taille du bien', description: 'Prix médian par nombre de chambres (S+n), un graphique par segment car les échelles diffèrent.' },
@@ -118,6 +177,11 @@ export class StatsComponent implements OnInit, AfterViewInit, OnDestroy {
   ];
 
   graphiques: Graphique[] = [
+    this.g('regionVolumes', 'regions', 'Annonces par région', 'Nombre d\'annonces par segment', true),
+    this.g('regionM2', 'regions', 'Prix médian au m² par région', 'Vente, TND/m²'),
+    this.g('regionLoyer', 'regions', 'Loyer médian par région', 'Location à l\'année, TND/mois'),
+    this.g('regionPrix', 'regions', 'Prix médian de vente par région', 'Vente, prix total (TND) : reflète aussi la taille des biens', true),
+    this.g('regionNuit', 'regions', 'Prix médian par nuit par région', 'Location estivale, TND/nuit', true),
     this.g('prixm2Gouv', 'vente', 'Prix médian au m² par gouvernorat', 'TND/m², gouvernorats avec au moins 8 annonces'),
     this.g('histoM2', 'vente', 'Distribution des prix au m²', 'Nombre d\'annonces de vente par tranche de prix au m²'),
     this.g('prixGouv', 'vente', 'Prix médian par zone', 'Prix total (TND), toutes surfaces confondues'),
@@ -130,11 +194,15 @@ export class StatsComponent implements OnInit, AfterViewInit, OnDestroy {
     this.g('rendement', 'investissement', 'Rendement locatif brut par ville', '', true),
     this.g('activite', 'activite', 'Nouvelles annonces par jour', '60 derniers jours, par segment', true),
     this.g('types', 'activite', 'Répartition par type de bien', 'Part des annonces de chaque segment'),
-    this.g('sources', 'activite', 'Annonces par source', 'Toutes collections'),
+    this.g('sources', 'activite', 'Provenance des données', 'Part de chaque site source dans les annonces (%)'),
     this.g('variations', 'activite', 'Variations de prix récentes', 'Plus fortes variations sur 90 jours (%)', true),
   ];
 
   private charts = new Map<string, Chart>();
+
+  qualite: any = null;
+  qualiteColonnes: { libelle: string; couleur: string; brutes: number; propres: number; part: number }[] = [];
+  qualiteLignes: { libelle: string; aide?: string; valeurs: (number | null)[] }[] = [];
 
   constructor(private http: HttpClient) {}
 
@@ -153,6 +221,7 @@ export class StatsComponent implements OnInit, AfterViewInit, OnDestroy {
       marche: sur(this.http.get<any>(API_BASE + '/api/stats/marche')),
       gouv: sur(this.http.get<any>(API_BASE + '/api/stats/prix_par_gouvernorat?collection=clean_vente')),
       villes: sur(this.http.get<any>(API_BASE + '/api/stats/prix_par_ville?collection=clean_estival')),
+      qualite: sur(this.http.get<any>(API_BASE + '/api/stats/qualite')),
       variations: forkJoin(['clean_vente', 'clean_location', 'clean_estival'].map(collection =>
         this.http.get<any>(API_BASE + '/api/alertes/prix', { params: { collection, jours: 90, limit: 200 } })
           .pipe(catchError(() => of({ data: [] }))))),
@@ -161,6 +230,7 @@ export class StatsComponent implements OnInit, AfterViewInit, OnDestroy {
       this.marche = r.marche;
       this.collections = Object.keys(r.stats?.collections || {}).map(key => ({ name: key, ...r.stats.collections[key] }));
       this.construireKpis();
+      this.construireQualite(r.qualite);
       this.construireGraphiques(r);
       setTimeout(() => this.dessiner());
     });
@@ -173,6 +243,40 @@ export class StatsComponent implements OnInit, AfterViewInit, OnDestroy {
   ngOnDestroy(): void {
     this.charts.forEach(c => c.destroy());
     this.charts.clear();
+  }
+
+  allerA(id: string): void {
+    document.getElementById('stats-' + id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  private construireQualite(rapport: any): void {
+    const cols = rapport?.collections;
+    if (!cols) return;
+    this.qualite = rapport;
+    const segments = (['vente', 'location', 'estival'] as const).filter(seg => cols[`clean_${seg}`]);
+    this.qualiteColonnes = segments.map(seg => {
+      const c = cols[`clean_${seg}`];
+      return { libelle: LIBELLE_SEGMENT[seg], couleur: SEGMENT[seg], brutes: c.annonces_brutes ?? 0, propres: c.annonces_propres ?? 0,
+               part: c.annonces_brutes ? Math.round(100 * (c.annonces_propres ?? 0) / c.annonces_brutes) : 0 };
+    });
+    const controles: [string, string, string?][] = [
+      ['non_residentiels_retires', 'Biens non résidentiels écartés', 'terrains, locaux, bureaux…'],
+      ['locations_mal_classees_retirees', 'Locations publiées en vente', 'reclassées hors du segment vente'],
+      ['prix_hors_norme_retires', 'Prix hors norme écartés'],
+      ['chambres_hotel_retirees', 'Chambres d\'hôtel écartées', 'seuls les logements entiers sont gardés'],
+      ['annonces_retirees_exclues', 'Annonces retirées du site'],
+      ['doublons_meme_bien_retires', 'Doublons (même bien, plusieurs annonces)'],
+      ['doublons_texte_retires', 'Doublons (texte quasi identique)'],
+      ['chambres_aberrantes_corrigees', 'Nombre de chambres corrigé', 'valeur incohérente, reprise du titre (S+n)'],
+      ['chambres_completees_depuis_titre', 'Chambres complétées depuis le titre'],
+      ['surfaces_incoherentes_videes', 'Surfaces incohérentes vidées', 'prix au m² impossible'],
+      ['pieces_aberrantes_videes', 'Nombre de pièces aberrant vidé'],
+      ['sans_surface', 'Annonces sans surface', 'restent utilisables, hors calculs au m²'],
+      ['sans_coordonnees', 'Annonces non géolocalisées'],
+    ];
+    this.qualiteLignes = controles
+      .map(([cle, libelle, aide]) => ({ libelle, aide, valeurs: segments.map(seg => cols[`clean_${seg}`][cle] ?? null) }))
+      .filter(l => l.valeurs.some(v => v));
   }
 
   labelForCollection(name: string): string {
@@ -244,8 +348,8 @@ export class StatsComponent implements OnInit, AfterViewInit, OnDestroy {
     const m = r.marche || {};
     if (!r.marche) {
       // API lancée avant l'ajout de /api/stats/marche (404) ou injoignable
-      const message = "Données indisponibles : l'API ne répond pas à /api/stats/marche (redémarrez le serveur FastAPI).";
-      ['prixm2Gouv', 'histoM2', 'loyerVille', 'chambresVente', 'chambresLocation', 'chambresEstival', 'nuitType',
+      const message = "Données momentanément indisponibles.";
+      ['regionVolumes', 'regionM2', 'regionLoyer', 'regionPrix', 'regionNuit', 'prixm2Gouv', 'histoM2', 'loyerVille', 'chambresVente', 'chambresLocation', 'chambresEstival', 'nuitType',
        'rendement', 'activite', 'types'].forEach(id => this.def(id).vide = message);
     }
 
@@ -319,14 +423,115 @@ export class StatsComponent implements OnInit, AfterViewInit, OnDestroy {
     this.activite(m.activite_quotidienne || []);
     this.typesBiens(m.types || {});
 
-    const sources = new Map<string, number>();
-    Object.values(r.stats?.sources || {}).forEach((parCollection: any) =>
-      Object.entries(parCollection || {}).forEach(([src, n]) => sources.set(src, (sources.get(src) || 0) + Number(n))));
-    const lignesSources = [...sources.entries()].filter(([s]) => s).sort((a, b) => b[1] - a[1])
-      .map(([s, n]) => ({ label: s.charAt(0).toUpperCase() + s.slice(1), valeur: n }));
-    this.barres('sources', lignesSources, NEUTRE, 'annonces', { horizontal: true, colonnes: ['Source', 'Annonces'] });
+    this.regions(m.par_region || []);
+    this.sources(r.stats?.collections || {});
 
     this.variations((r.variations || []).flatMap((x: any) => x?.data || []));
+  }
+
+  private regions(regions: any[]): void {
+    const g = this.def('regionVolumes');
+    if (regions.length) {
+      const segments = ['vente', 'location', 'estival'] as const;
+      g.config = {
+        type: 'bar',
+        data: {
+          labels: regions.map(z => z.region),
+          datasets: segments.map(seg => ({
+            label: LIBELLE_SEGMENT[seg],
+            data: regions.map(z => z[`n_${seg}`]),
+            backgroundColor: SEGMENT[seg],
+            borderColor: '#ffffff',
+            borderWidth: 1,
+            stack: 'region',
+          })),
+        },
+        options: {
+          indexAxis: 'y',
+          plugins: {
+            legend: { position: 'bottom', labels: { color: ENCRE, boxWidth: 12, boxHeight: 12 } },
+            tooltip: { mode: 'index', intersect: false },
+          },
+          scales: {
+            x: { stacked: true, grid: { color: GRILLE }, border: { display: false }, ticks: { color: ENCRE } },
+            y: { stacked: true, grid: { display: false }, border: { display: false }, ticks: { color: ENCRE } },
+          },
+        },
+      } as ChartConfiguration;
+      g.tableau = {
+        colonnes: ['Région', 'Vente', 'Location', 'Estival', 'Prix médian vente', 'Prix au m²', 'Loyer médian', 'Prix / nuit'],
+        lignes: regions.map(z => [z.region, z.n_vente, z.n_location, z.n_estival,
+          z.prix_vente ? `${nf(z.prix_vente)} TND` : '—', z.prix_m2_vente ? `${nf(z.prix_m2_vente)} TND/m²` : '—',
+          z.loyer ? `${nf(z.loyer)} TND/mois` : '—', z.prix_nuit ? `${nf(z.prix_nuit)} TND` : '—']),
+      };
+    } else {
+      g.vide = g.vide || 'Pas de données';
+    }
+
+    // Médianes : régions classées de la plus chère à la moins chère, sans les régions trop peu fournies
+    const classement = (cle: string, seg: string) => regions.filter(z => z[cle])
+      .sort((a, b) => b[cle] - a[cle])
+      .map(z => ({ region: z.region, valeur: z[cle], n: z[`n_${seg}`] }));
+    ([['regionM2', 'prix_m2_vente', 'vente', 'TND/m²'], ['regionLoyer', 'loyer', 'location', 'TND/mois'],
+      ['regionPrix', 'prix_vente', 'vente', 'TND'],
+      ['regionNuit', 'prix_nuit', 'estival', 'TND/nuit']] as const).forEach(([id, cle, seg, unite]) => {
+      const lignes = classement(cle, seg);
+      this.barres(id, lignes.map(l => ({ label: l.region, valeur: l.valeur })), SEGMENT[seg], unite, {
+        horizontal: true,
+        colonnes: ['Région', 'Médiane', 'Annonces'],
+        tableau: lignes.map(l => [l.region, `${nf(l.valeur)} ${unite}`, l.n]),
+      });
+    });
+  }
+
+  private sources(collections: any): void {
+    const g = this.def('sources');
+    const parSegment = (['vente', 'location', 'estival'] as const)
+      .filter(seg => collections[seg]?.top_sources?.length)
+      .map(seg => ({
+        libelle: LIBELLE_SEGMENT[seg],
+        comptes: Object.fromEntries(collections[seg].top_sources.map((t: any) => [String(t.source).toLowerCase(), Number(t.count)])) as Record<string, number>,
+      }));
+    if (!parSegment.length) { g.vide = g.vide || 'Pas de données'; return; }
+    const total: Record<string, number> = {};
+    parSegment.forEach(l => Object.entries(l.comptes).forEach(([src, n]) => total[src] = (total[src] || 0) + n));
+    const lignes = [{ libelle: 'Toutes les annonces', comptes: total }, ...parSegment];
+    const connues = Object.keys(SOURCE).filter(src => total[src]);
+    const sources = [...connues, ...Object.keys(total).filter(src => !SOURCE[src]).sort((a, b) => total[b] - total[a])];
+    const somme = (c: Record<string, number>) => Object.values(c).reduce((a, b) => a + b, 0);
+    const part = (c: Record<string, number>, src: string) => somme(c) ? Math.round((c[src] || 0) / somme(c) * 1000) / 10 : 0;
+    const nom = (src: string) => src.charAt(0).toUpperCase() + src.slice(1);
+
+    g.config = {
+      type: 'bar',
+      data: {
+        labels: lignes.map(l => l.libelle),
+        datasets: sources.map(src => ({
+          label: nom(src),
+          data: lignes.map(l => part(l.comptes, src)),
+          backgroundColor: SOURCE[src] || AUTRE_SOURCE,
+          borderColor: '#ffffff',
+          borderWidth: 2,
+          stack: 'part',
+        })),
+      },
+      options: {
+        indexAxis: 'y',
+        plugins: {
+          legend: { position: 'bottom', labels: { color: ENCRE, boxWidth: 12, boxHeight: 12 } },
+          tooltip: { callbacks: { label: (ctx: any) => ` ${ctx.dataset.label} : ${nf(ctx.raw, 1)} % (${nf(lignes[ctx.dataIndex].comptes[sources[ctx.datasetIndex]] || 0)} annonces)` } },
+        },
+        scales: {
+          x: { stacked: true, max: 100, grid: { color: GRILLE }, border: { display: false }, ticks: { color: ENCRE, callback: (v: any) => `${v} %` } },
+          y: { stacked: true, grid: { display: false }, border: { display: false }, ticks: { color: ENCRE } },
+        },
+      },
+      plugins: [etiquettesSegments],
+    } as ChartConfiguration;
+    g.tableau = {
+      colonnes: ['', ...sources.map(nom)],
+      lignes: lignes.map(l => [l.libelle, ...sources.map(src => l.comptes[src] ? `${nf(l.comptes[src])} (${nf(part(l.comptes, src), 1)} %)` : '—')]),
+    };
   }
 
   private activite(jours: any[]): void {

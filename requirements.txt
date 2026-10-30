@@ -1,6 +1,7 @@
 # API
 fastapi>=0.110
 uvicorn>=0.29
+watchfiles>=0.21      # rechargement rapide en dev (--reload) : sans lui, Uvicorn rescanne aussi node_modules
 
 # Collecte
 scrapy>=2.13

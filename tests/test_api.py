@@ -58,6 +58,20 @@ class TestAnnonces:
         for item in r.json()["data"]:
             assert "lat" in item and "lon" in item
 
+    def test_carte_location(self, client):
+        r = client.get("/api/annonces/carte", params={"collection": "clean_location", "limit": 50})
+        assert r.status_code == 200
+        for item in r.json()["data"]:
+            assert 30 <= item["lat"] <= 38 and 7 <= item["lon"] <= 12
+
+    def test_zones(self, client):
+        r = client.get("/api/annonces/zones", params={"collection": "clean_vente", "min_annonces": 3})
+        assert r.status_code == 200
+        zones = r.json()["zones"]
+        assert all(z["nb_annonces"] >= 3 and not any(c.isdigit() for c in z["nom"]) for z in zones)
+        comptes = [z["nb_annonces"] for z in zones]
+        assert comptes == sorted(comptes, reverse=True)
+
     def test_recentes(self, client):
         r = client.get("/api/annonces/recentes")
         assert r.status_code == 200
@@ -209,3 +223,15 @@ class TestAlertes:
     def test_prix(self, client):
         r = client.get("/api/alertes/prix")
         assert r.status_code == 200
+
+
+@pytest.mark.mongo
+def test_marche_par_region(client):
+    r = client.get("/api/stats/marche")
+    assert r.status_code == 200
+    regions = r.json()["par_region"]
+    assert regions and {"region", "n_vente", "n_location", "n_estival", "prix_m2_vente", "loyer", "prix_nuit"} <= set(regions[0])
+    for z in regions:
+        # médiane publiée seulement avec assez d'annonces
+        if z["n_vente"] < 8:
+            assert z["prix_m2_vente"] is None

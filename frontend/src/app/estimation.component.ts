@@ -1,693 +1,522 @@
 import { API_BASE } from './api.config';
 import { Component, OnInit } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
-import { FormsModule, ReactiveFormsModule, FormBuilder, FormGroup, Validators } from '@angular/forms';
+import { FormsModule } from '@angular/forms';
 import { CommonModule } from '@angular/common';
+
+type Mode = 'vente' | 'location' | 'estival' | 'roi';
+
+interface Resultat {
+  valeur: number;
+  bas?: number;
+  haut?: number;
+  unite: string;
+  erreur?: number | null;
+  zone?: string | null;
+  zoneDemandee?: string;
+  details: { libelle: string; valeur: string }[];
+}
+
+const CLE_STOCKAGE = 'immoinsight-estimation';
+const nf = (v: number, d = 0) => Number(v).toLocaleString('fr-FR', { maximumFractionDigits: d });
 
 @Component({
   selector: 'app-estimation',
   standalone: true,
-  imports: [CommonModule, FormsModule, ReactiveFormsModule],
+  imports: [CommonModule, FormsModule],
   template: `
-    <div class="card estimation-shell" style="margin-bottom:20px">
+    <div class="card">
       <div class="section-head">
         <div>
-          <p class="eyebrow">Calcul intelligent</p>
-          <h2>Estimation de prix et lecture de rentabilité</h2>
-          <p class="section-copy">
-            Combine l'AVM vente, le loyer de marché, le calcul ROI et des repères de zones pour sortir d'un simple formulaire.
-          </p>
-        </div>
-        <div class="summary-pills">
-          <div class="summary-pill"><strong>{{ topZones.length }}</strong> zones analysées</div>
-          <div class="summary-pill"><strong>3</strong> scénarios d'estimation</div>
+          <p class="eyebrow">Estimer un bien</p>
+          <h2>Combien vaut-il ? Combien peut-il rapporter ?</h2>
+          <p class="section-copy">Estimations issues des modèles entraînés sur les annonces de la plateforme, avec leur marge d'erreur réelle.</p>
         </div>
       </div>
 
-      <div class="insight-strip">
-        <div class="insight-card">
-          <span>Lecture marché</span>
-          <strong>Zone, prix, loyer, ROI</strong>
-        </div>
-        <div class="insight-card">
-          <span>Nettoyage data</span>
-          <strong>Libellés aberrants filtrés</strong>
-        </div>
-        <div class="insight-card">
-          <span>Sortie</span>
-          <strong>Résultats comparables et lisibles</strong>
-        </div>
-      </div>
-
-      <div class="summary-grid">
-        <div class="summary-tile">
-          <span>AVM vente</span>
-          <strong>XGBoost + LightGBM</strong>
-        </div>
-        <div class="summary-tile">
-          <span>Loyer classique</span>
-          <strong>Prix/m² local</strong>
-        </div>
-        <div class="summary-tile">
-          <span>ROI</span>
-          <strong>Score /100</strong>
-        </div>
-        <div class="summary-tile">
-          <span>Estival</span>
-          <strong>Prix / nuit</strong>
-        </div>
-      </div>
-
-      <form [formGroup]="estimationForm" (ngSubmit)="onSubmit()">
-        <div class="form-grid">
-          <div class="form-group">
-            <label>Surface (m²) *</label>
-            <input type="number" formControlName="surface" placeholder="ex: 120" />
-          </div>
-          <div class="form-group">
-            <label>Type de bien</label>
-            <select formControlName="type_bien">
-              <option value="">— Sélectionner —</option>
-              <option value="appartement">Appartement</option>
-              <option value="villa">Villa / Maison</option>
-              <option value="terrain">Terrain</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label>Nombre de pièces</label>
-            <input type="number" formControlName="nb_pieces" placeholder="ex: 3" />
-          </div>
-          <div class="form-group">
-            <label>Nombre de chambres</label>
-            <input type="number" formControlName="nb_chambres" placeholder="ex: 2" />
-          </div>
-          <div class="form-group">
-            <label>Gouvernorat</label>
-            <input type="text" formControlName="gouvernorat" placeholder="ex: Tunis" />
-          </div>
-          <div class="form-group">
-            <label>Parking</label>
-            <select formControlName="has_parking">
-              <option value="0">Non</option>
-              <option value="1">Oui</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label>Ascenseur</label>
-            <select formControlName="has_ascenseur">
-              <option value="0">Non</option>
-              <option value="1">Oui</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label>Piscine</label>
-            <select formControlName="has_piscine">
-              <option value="0">Non</option>
-              <option value="1">Oui</option>
-            </select>
-          </div>
-        </div>
-
-        <button type="submit" class="btn btn-accent" [disabled]="estimationForm.invalid || loading">
-          <span *ngIf="loading" class="spinner" style="display:inline-block;width:16px;height:16px;border-width:2px;margin-right:6px;vertical-align:middle"></span>
-          {{ loading ? 'Calcul en cours...' : 'Estimer le prix' }}
+      <div class="mode-tabs" role="tablist" aria-label="Type d'estimation">
+        <button *ngFor="let m of modes" role="tab" [attr.aria-selected]="mode === m.id" [class.active]="mode === m.id" (click)="changerMode(m.id)">
+          <span class="mode-icone" aria-hidden="true">{{ m.icone }}</span>
+          <span>{{ m.libelle }}</span>
+          <small>{{ m.aide }}</small>
         </button>
-      </form>
-
-      <div *ngIf="result" class="result-box">
-        <h3>Résultat de l'estimation</h3>
-        <div class="result-price">
-          {{ result.prix_estime | number:'1.0-0' }} TND
-        </div>
-        <div class="result-range" *ngIf="!result.zone_reconnue && estimationForm.value.gouvernorat" style="color:#8a6d3b">
-          Zone « {{ estimationForm.value.gouvernorat }} » inconnue des données : estimation sans localisation.
-        </div>
-        <div class="result-range">
-          Intervalle à 80 % (erreurs mesurées en validation croisée) :
-          <strong>{{ result.intervalle_bas | number:'1.0-0' }}</strong> —
-          <strong>{{ result.intervalle_haut | number:'1.0-0' }}</strong> TND
-        </div>
-        <div class="summary-grid" style="margin-top:16px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
-          <div class="summary-tile">
-            <span>XGBoost</span>
-            <strong>{{ result.prix_xgb | number:'1.0-0' }}</strong>
-          </div>
-          <div class="summary-tile">
-            <span>LightGBM</span>
-            <strong>{{ result.prix_lgb | number:'1.0-0' }}</strong>
-          </div>
-          <div class="summary-tile">
-            <span>Intervalle bas</span>
-            <strong>{{ result.intervalle_bas | number:'1.0-0' }}</strong>
-          </div>
-          <div class="summary-tile">
-            <span>Intervalle haut</span>
-            <strong>{{ result.intervalle_haut | number:'1.0-0' }}</strong>
-          </div>
-        </div>
       </div>
 
-      <div *ngIf="error" class="result-box" style="background:#fbe9e7">
-        <p style="color:#c62828">⚠️ {{ error }}</p>
+      <div class="estim-grid">
+        <!-- ===================== Formulaires ===================== -->
+        <form class="estim-form" (ngSubmit)="estimer()" novalidate>
+          <ng-container [ngSwitch]="mode">
+
+            <ng-container *ngSwitchCase="'vente'">
+              <div class="champ">
+                <label for="v-zone">Ville ou quartier</label>
+                <input id="v-zone" name="vzone" list="zones-vente" [(ngModel)]="vente.zone" placeholder="ex. La Marsa, Ennasr, Sousse" autocomplete="off" />
+                <datalist id="zones-vente"><option *ngFor="let z of zones.vente" [value]="z"></option></datalist>
+              </div>
+              <div class="champ">
+                <label for="v-surface">Surface habitable <span class="requis">*</span></label>
+                <div class="avec-unite">
+                  <input id="v-surface" name="vsurface" type="number" min="1" [(ngModel)]="vente.surface" placeholder="ex. 120" [class.invalide]="erreurs['surface']" />
+                  <span>m²</span>
+                </div>
+                <p class="champ-erreur" *ngIf="erreurs['surface']">{{ erreurs['surface'] }}</p>
+              </div>
+              <div class="champ">
+                <label>Type de bien</label>
+                <div class="choix">
+                  <button type="button" *ngFor="let t of typesVente" [class.actif]="vente.type_bien === t.id" (click)="vente.type_bien = t.id">{{ t.libelle }}</button>
+                </div>
+              </div>
+              <div class="champ">
+                <label for="v-ch">Chambres</label>
+                <select id="v-ch" name="vch" [(ngModel)]="vente.chambres">
+                  <option [ngValue]="null">Non précisé</option>
+                  <option *ngFor="let c of chambres" [ngValue]="c.valeur">{{ c.libelle }}</option>
+                </select>
+              </div>
+              <div class="champ">
+                <label>Équipements</label>
+                <div class="choix">
+                  <button type="button" [class.actif]="vente.parking" (click)="vente.parking = !vente.parking">🚗 Parking</button>
+                  <button type="button" [class.actif]="vente.ascenseur" (click)="vente.ascenseur = !vente.ascenseur">🛗 Ascenseur</button>
+                  <button type="button" [class.actif]="vente.piscine" (click)="vente.piscine = !vente.piscine">🏊 Piscine</button>
+                </div>
+              </div>
+            </ng-container>
+
+            <ng-container *ngSwitchCase="'location'">
+              <div class="champ">
+                <label for="l-zone">Ville ou quartier</label>
+                <input id="l-zone" name="lzone" list="zones-location" [(ngModel)]="location.zone" placeholder="ex. La Marsa, Ennasr, Sousse" autocomplete="off" />
+                <datalist id="zones-location"><option *ngFor="let z of zones.location" [value]="z"></option></datalist>
+              </div>
+              <div class="champ">
+                <label for="l-surface">Surface habitable</label>
+                <div class="avec-unite">
+                  <input id="l-surface" name="lsurface" type="number" min="1" [(ngModel)]="location.surface" placeholder="ex. 90" [class.invalide]="erreurs['surface']" />
+                  <span>m²</span>
+                </div>
+                <p class="champ-erreur" *ngIf="erreurs['surface']">{{ erreurs['surface'] }}</p>
+              </div>
+              <div class="champ">
+                <label>Type de bien</label>
+                <div class="choix">
+                  <button type="button" [class.actif]="location.type_bien === 'appartement'" (click)="location.type_bien = 'appartement'">Appartement</button>
+                  <button type="button" [class.actif]="location.type_bien === 'villa'" (click)="location.type_bien = 'villa'">Villa / étage de villa</button>
+                </div>
+              </div>
+              <div class="champ-ligne">
+                <div class="champ">
+                  <label for="l-ch">Chambres</label>
+                  <select id="l-ch" name="lch" [(ngModel)]="location.chambres">
+                    <option [ngValue]="null">Non précisé</option>
+                    <option *ngFor="let c of chambres" [ngValue]="c.valeur">{{ c.libelle }}</option>
+                  </select>
+                </div>
+                <div class="champ">
+                  <label for="l-sdb">Salles de bain</label>
+                  <select id="l-sdb" name="lsdb" [(ngModel)]="location.sdb">
+                    <option [ngValue]="null">Non précisé</option>
+                    <option [ngValue]="1">1</option><option [ngValue]="2">2</option><option [ngValue]="3">3 et +</option>
+                  </select>
+                </div>
+              </div>
+              <div class="champ">
+                <label>Ameublement</label>
+                <div class="choix">
+                  <button type="button" [class.actif]="location.meuble === null" (click)="location.meuble = null">Non précisé</button>
+                  <button type="button" [class.actif]="location.meuble === true" (click)="location.meuble = true">Meublé</button>
+                  <button type="button" [class.actif]="location.meuble === false" (click)="location.meuble = false">Vide</button>
+                </div>
+              </div>
+            </ng-container>
+
+            <ng-container *ngSwitchCase="'estival'">
+              <div class="champ">
+                <label for="e-ville">Ville balnéaire <span class="requis">*</span></label>
+                <select id="e-ville" name="eville" [(ngModel)]="estival.ville" [class.invalide]="erreurs['ville']">
+                  <option value="">— Choisir —</option>
+                  <option *ngFor="let v of villesEstivales" [value]="v">{{ v }}</option>
+                </select>
+                <p class="champ-erreur" *ngIf="erreurs['ville']">{{ erreurs['ville'] }}</p>
+              </div>
+              <div class="champ">
+                <label>Type de logement</label>
+                <div class="choix">
+                  <button type="button" [class.actif]="!estival.categorie" (click)="estival.categorie = null">Non précisé</button>
+                  <button type="button" [class.actif]="estival.categorie === 'appartement'" (click)="estival.categorie = 'appartement'">Appartement</button>
+                  <button type="button" [class.actif]="estival.categorie === 'maison_vacances'" (click)="estival.categorie = 'maison_vacances'">Maison</button>
+                  <button type="button" [class.actif]="estival.categorie === 'villa'" (click)="estival.categorie = 'villa'">Villa</button>
+                </div>
+              </div>
+              <div class="champ-ligne">
+                <div class="champ">
+                  <label for="e-ch">Chambres</label>
+                  <select id="e-ch" name="ech" [(ngModel)]="estival.chambres">
+                    <option [ngValue]="null">Non précisé</option>
+                    <option *ngFor="let c of chambres" [ngValue]="c.valeur">{{ c.libelle }}</option>
+                  </select>
+                </div>
+                <div class="champ">
+                  <label for="e-lits">Couchages</label>
+                  <input id="e-lits" name="elits" type="number" min="1" max="40" [(ngModel)]="estival.lits" placeholder="ex. 4" />
+                </div>
+              </div>
+              <div class="champ">
+                <label for="e-surface">Surface</label>
+                <div class="avec-unite">
+                  <input id="e-surface" name="esurface" type="number" min="1" [(ngModel)]="estival.surface" placeholder="ex. 100" />
+                  <span>m²</span>
+                </div>
+              </div>
+              <div class="champ">
+                <label>Emplacement</label>
+                <div class="choix">
+                  <button type="button" [class.actif]="estival.front_de_mer === true" (click)="estival.front_de_mer = estival.front_de_mer === true ? null : true">🌊 Front de mer</button>
+                </div>
+              </div>
+            </ng-container>
+
+            <ng-container *ngSwitchCase="'roi'">
+              <div class="champ">
+                <label for="r-prix">Prix d'achat <span class="requis">*</span></label>
+                <div class="avec-unite">
+                  <input id="r-prix" name="rprix" type="number" min="1" [(ngModel)]="roi.prix" placeholder="ex. 300000" [class.invalide]="erreurs['prix']" />
+                  <span>TND</span>
+                </div>
+                <p class="champ-erreur" *ngIf="erreurs['prix']">{{ erreurs['prix'] }}</p>
+              </div>
+              <div class="champ">
+                <label for="r-loyer">Loyer mensuel (location à l'année)</label>
+                <div class="avec-unite">
+                  <input id="r-loyer" name="rloyer" type="number" min="0" [(ngModel)]="roi.loyer" placeholder="ex. 1500" [class.invalide]="erreurs['revenus']" />
+                  <span>TND/mois</span>
+                </div>
+              </div>
+              <div class="champ">
+                <label for="r-nuit">Prix par nuit (location estivale)</label>
+                <div class="avec-unite">
+                  <input id="r-nuit" name="rnuit" type="number" min="0" [(ngModel)]="roi.nuit" placeholder="ex. 250" [class.invalide]="erreurs['revenus']" />
+                  <span>TND/nuit</span>
+                </div>
+                <p class="champ-erreur" *ngIf="erreurs['revenus']">{{ erreurs['revenus'] }}</p>
+              </div>
+              <div class="champ" *ngIf="roi.nuit">
+                <label for="r-nuits">Nuits louées par an : <strong>{{ roi.nuits }}</strong></label>
+                <input id="r-nuits" name="rnuits" type="range" min="10" max="180" step="5" [(ngModel)]="roi.nuits" />
+                <p class="champ-aide">En Tunisie, la saison couvre surtout juin à septembre (≈ 60 à 100 nuits).</p>
+              </div>
+            </ng-container>
+          </ng-container>
+
+          <div class="estim-actions">
+            <button type="submit" class="btn btn-accent" [disabled]="chargement">
+              <span *ngIf="chargement" class="spinner spinner-sm"></span>
+              {{ mode === 'roi' ? 'Calculer la rentabilité' : 'Estimer' }}
+            </button>
+            <button type="button" class="btn-lien" (click)="reinitialiser()">Effacer</button>
+          </div>
+        </form>
+
+        <!-- ===================== Résultat ===================== -->
+        <section class="estim-result" aria-live="polite">
+          <div class="result-vide" *ngIf="!chargement && !erreur && (mode === 'roi' ? !roiResultat : !resultat[mode])">
+            <span class="result-vide-icone" aria-hidden="true">{{ modeCourant().icone }}</span>
+            <p>{{ modeCourant().vide }}</p>
+          </div>
+
+          <div class="result-chargement" *ngIf="chargement"><div class="spinner"></div>Calcul en cours…</div>
+          <div class="result-erreur" *ngIf="erreur && !chargement">⚠️ {{ erreur }}</div>
+
+          <ng-container *ngIf="mode !== 'roi' && resultat[mode] as r">
+            <ng-container *ngIf="!chargement && !erreur">
+              <span class="result-label">{{ modeCourant().resultat }}</span>
+              <div class="result-valeur">{{ format(r.valeur) }} <span>{{ r.unite }}</span></div>
+
+              <div class="fourchette" *ngIf="r.bas && r.haut">
+                <div class="fourchette-barre">
+                  <span class="fourchette-point" [style.left.%]="position(r)"></span>
+                </div>
+                <div class="fourchette-bornes">
+                  <span>{{ format(r.bas) }}</span>
+                  <span class="muted">fourchette probable (80 %)</span>
+                  <span>{{ format(r.haut) }}</span>
+                </div>
+              </div>
+
+              <p class="result-note" *ngIf="r.erreur">Erreur typique du modèle : ±{{ r.erreur | number:'1.0-0' }} % (médiane mesurée sur des annonces réelles).</p>
+              <p class="result-zone ok" *ngIf="r.zone">📍 Zone prise en compte : {{ r.zone }}</p>
+              <p class="result-zone attention" *ngIf="!r.zone && r.zoneDemandee">⚠️ « {{ r.zoneDemandee }} » n'apparaît pas dans les données : estimation sans effet de la localisation.</p>
+
+              <dl class="result-details" *ngIf="r.details.length">
+                <div *ngFor="let d of r.details"><dt>{{ d.libelle }}</dt><dd>{{ d.valeur }}</dd></div>
+              </dl>
+
+              <button type="button" class="btn btn-secondaire" (click)="versRentabilite()">📈 {{ texteVersRoi() }}</button>
+            </ng-container>
+          </ng-container>
+
+          <ng-container *ngIf="mode === 'roi' && roiResultat as r">
+            <ng-container *ngIf="!chargement && !erreur">
+              <span class="result-label">Rendement net annuel</span>
+              <div class="result-valeur">{{ r.rendement_net_pct | number:'1.1-1' }} <span>%</span>
+                <span class="badge" [ngClass]="classeRoi(r.label_roi)">{{ r.label_roi }}</span>
+              </div>
+              <div class="score">
+                <div class="score-barre"><span [style.width.%]="r.score_roi" [ngClass]="classeRoi(r.label_roi)"></span></div>
+                <span class="muted">Score {{ r.score_roi }}/100</span>
+              </div>
+              <dl class="result-details">
+                <div><dt>Rendement brut</dt><dd>{{ r.rendement_brut_pct | number:'1.1-1' }} %</dd></div>
+                <div><dt>Retour sur investissement</dt><dd>{{ r.temps_retour_annees ? (r.temps_retour_annees | number:'1.0-1') + ' ans' : '—' }}</dd></div>
+                <div><dt>Coût total d'acquisition</dt><dd>{{ r.cout_total_acquisition | number:'1.0-0' }} TND</dd></div>
+                <div><dt>Revenu annuel</dt><dd>{{ r.revenu_annuel_total | number:'1.0-0' }} TND</dd></div>
+                <div *ngIf="r.revenu_annuel_classique"><dt>dont location à l'année</dt><dd>{{ r.revenu_annuel_classique | number:'1.0-0' }} TND</dd></div>
+                <div *ngIf="r.revenu_annuel_estival"><dt>dont location estivale</dt><dd>{{ r.revenu_annuel_estival | number:'1.0-0' }} TND</dd></div>
+              </dl>
+              <p class="result-note">Hypothèses : frais d'acquisition 5 %, charges et taxes déduites du rendement net. Rendement médian observé (appartements) : {{ rendementMedian ? (rendementMedian | number:'1.1-1') + ' %' : '—' }} brut.</p>
+            </ng-container>
+          </ng-container>
+        </section>
       </div>
     </div>
 
-    <div class="card estimation-card" style="margin-top:20px">
-      <h2>🏠 Estimation de loyer mensuel (M2)</h2>
-      <p style="color:var(--text-secondary);margin-bottom:20px;font-size:0.9rem">
-        Modèle appris sur les annonces de location Tayara / Mubawab (repli : barème de références par zone).
-      </p>
-      <div class="form-grid">
-        <div class="form-group">
-          <label>Surface (m²)</label>
-          <input type="number" [(ngModel)]="loyerForm.surface" placeholder="ex: 90" />
-        </div>
-        <div class="form-group">
-          <label>Ville / délégation</label>
-          <input type="text" [(ngModel)]="loyerForm.ville" placeholder="ex: La Marsa, Ennasr..." />
-        </div>
-        <div class="form-group">
-          <label>Gouvernorat</label>
-          <input type="text" [(ngModel)]="loyerForm.gouvernorat" placeholder="ex: Tunis, Ariana..." />
-        </div>
-        <div class="form-group">
-          <label>Type de bien</label>
-          <select [(ngModel)]="loyerForm.type_bien">
-            <option value="appartement">Appartement</option>
-            <option value="villa">Villa / Maison</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label>Chambres</label>
-          <input type="number" min="0" [(ngModel)]="loyerForm.nb_chambres" placeholder="ex: 2 (S+2)" />
-        </div>
-        <div class="form-group">
-          <label>Salles de bain</label>
-          <input type="number" min="0" [(ngModel)]="loyerForm.nb_sdb" placeholder="ex: 1" />
-        </div>
-        <div class="form-group">
-          <label>Meublé</label>
-          <select [(ngModel)]="loyerForm.meuble">
-            <option [ngValue]="null">Non précisé</option>
-            <option [ngValue]="true">Oui</option>
-            <option [ngValue]="false">Non</option>
-          </select>
-        </div>
-      </div>
-      <button class="btn btn-accent" (click)="estimateLoyer()" [disabled]="loyerLoading">
-        <span *ngIf="loyerLoading" class="spinner" style="display:inline-block;width:16px;height:16px;border-width:2px;margin-right:6px;vertical-align:middle"></span>
-        Estimer le loyer
-      </button>
-
-      <div *ngIf="loyerResult" class="result-box">
-        <h3>Loyer estimé</h3>
-        <div class="result-price">
-          {{ loyerResult.loyer_estime | number:'1.0-0' }} TND / mois
-        </div>
-        <div class="result-range">
-          {{ loyerResult.modele === 'M2-lightgbm' ? 'Intervalle à 80 % (erreurs mesurées)' : 'Intervalle (±15 %)' }} :
-          <strong>{{ loyerResult.intervalle_bas | number:'1.0-0' }}</strong> —
-          <strong>{{ loyerResult.intervalle_haut | number:'1.0-0' }}</strong> TND
-        </div>
-        <div style="margin-top:12px;font-size:0.8rem;color:var(--text-light)">
-          <span *ngIf="loyerResult.prix_m2_reference">{{ loyerResult.prix_m2_reference }} DT/m²/mois · </span>{{ loyerResult.modele }}
-          <span *ngIf="loyerResult.modele === 'M2-lightgbm'"> · {{ loyerResult.zone_reconnue ? 'zone : ' + loyerResult.zone_reconnue : 'zone inconnue des données' }}</span>
-        </div>
-      </div>
-      <div *ngIf="loyerError" class="result-box" style="background:#fbe9e7">
-        <p style="color:#c62828">⚠️ {{ loyerError }}</p>
-      </div>
-    </div>
-
-    <div class="card estimation-card" style="margin-top:20px">
-      <h2>🌊 Estimation estivale</h2>
-      <p style="color:var(--text-secondary);margin-bottom:20px;font-size:0.9rem">
-        Prix de nuit médian observé sur Booking dans la ville (logement entier), avec la fourchette des annonces.
-      </p>
-      <div class="form-grid">
-        <div class="form-group">
-          <label>Ville *</label>
-          <select [(ngModel)]="estivalForm.ville">
-            <option value="">— Sélectionner —</option>
-            <option *ngFor="let v of estivalVilles" [value]="v">{{ v }}</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label>Type de logement</label>
-          <select [(ngModel)]="estivalForm.categorie">
-            <option [ngValue]="null">Non précisé</option>
-            <option value="appartement">Appartement</option>
-            <option value="maison_vacances">Maison de vacances</option>
-            <option value="villa">Villa</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label>Chambres</label>
-          <input type="number" min="0" [(ngModel)]="estivalForm.nb_chambres" placeholder="ex: 2" />
-        </div>
-        <div class="form-group">
-          <label>Surface (m²)</label>
-          <input type="number" min="1" [(ngModel)]="estivalForm.surface" placeholder="ex: 90" />
-        </div>
-        <div class="form-group">
-          <label>Lits</label>
-          <input type="number" min="1" [(ngModel)]="estivalForm.nb_lits" placeholder="ex: 4" />
-        </div>
-        <div class="form-group">
-          <label>Front de mer</label>
-          <select [(ngModel)]="estivalForm.front_de_mer">
-            <option [ngValue]="null">Non précisé</option>
-            <option [ngValue]="true">Oui</option>
-            <option [ngValue]="false">Non</option>
-          </select>
-        </div>
-      </div>
-      <button class="btn btn-accent" (click)="estimateEstival()" [disabled]="estivalLoading || !estivalForm.ville">
-        <span *ngIf="estivalLoading" class="spinner" style="display:inline-block;width:16px;height:16px;border-width:2px;margin-right:6px;vertical-align:middle"></span>
-        Estimer le prix / nuit
-      </button>
-
-      <div *ngIf="estivalResult" class="result-box">
-        <h3>Prix estival estimé</h3>
-        <div class="result-price">
-          {{ estivalResult.prix_nuit_estime | number:'1.0-0' }} TND / nuit
-        </div>
-        <div class="result-range">
-          {{ estivalResult.modele === 'M3-lightgbm' ? 'Intervalle à 80 % (erreurs mesurées)' : 'Moitié centrale des annonces' }} :
-          <strong>{{ estivalResult.intervalle_bas | number:'1.0-0' }}</strong> —
-          <strong>{{ estivalResult.intervalle_haut | number:'1.0-0' }}</strong> TND / nuit
-          ({{ estivalResult.nb_annonces }} annonces dans la ville)
-        </div>
-        <div class="result-range" *ngIf="estivalResult.mediane_ville">
-          Médiane de la ville : <strong>{{ estivalResult.mediane_ville | number:'1.0-0' }}</strong> TND / nuit
-        </div>
-      </div>
-
-      <div *ngIf="estivalError" class="result-box" style="background:#fbe9e7">
-        <p style="color:#c62828">⚠️ {{ estivalError }}</p>
-      </div>
-    </div>
-
-    <div class="card estimation-card" style="margin-top:20px">
-      <h2>💰 Calcul ROI investisseur</h2>
-      <p style="color:var(--text-secondary);margin-bottom:20px;font-size:0.9rem">
-        Rendement combiné avec lecture de risque et temps de retour.
-      </p>
-      <div class="form-grid">
-        <div class="form-group">
-          <label>Prix d'achat (TND) *</label>
-          <input type="number" [(ngModel)]="roiForm.prix" placeholder="ex: 300000" />
-        </div>
-        <div class="form-group">
-          <label>Loyer mensuel classique (TND)</label>
-          <input type="number" [(ngModel)]="roiForm.loyer_mensuel" placeholder="ex: 1500" />
-        </div>
-        <div class="form-group">
-          <label>Prix / nuit estival (TND)</label>
-          <input type="number" [(ngModel)]="roiForm.prix_nuit" placeholder="ex: 350" />
-        </div>
-        <div class="form-group">
-          <label>Nuits louées / an</label>
-          <input type="number" [(ngModel)]="roiForm.nuits_an" value="90" />
-        </div>
-      </div>
-      <button class="btn btn-accent" (click)="calculateRoi()" [disabled]="roiLoading">
-        <span *ngIf="roiLoading" class="spinner" style="display:inline-block;width:16px;height:16px;border-width:2px;margin-right:6px;vertical-align:middle"></span>
-        Calculer le ROI
-      </button>
-
-      <div *ngIf="roiError" class="result-box" style="background:#fbe9e7">
-        <p style="color:#c62828">⚠️ {{ roiError }}</p>
-      </div>
-      <div *ngIf="roiResult" class="result-box">
-        <h3>Résultat ROI</h3>
-        <div class="result-price">
-          Rendement net : {{ roiResult.rendement_net_pct }} %
-          <span class="badge" [ngClass]="{
-            'badge-success': roiResult.label_roi === 'excellent' || roiResult.label_roi === 'bon',
-            'badge-warning': roiResult.label_roi === 'moyen' || roiResult.label_roi === 'faible',
-            'badge-danger': roiResult.label_roi === 'deficitaire'
-          }" style="margin-left:8px">{{ roiResult.label_roi }}</span>
-        </div>
-        <div class="result-range">
-          Score ROI : <strong>{{ roiResult.score_roi }}/100</strong> ·
-          Temps de retour : <strong>{{ roiResult.temps_retour_annees ? roiResult.temps_retour_annees + ' ans' : '—' }}</strong>
-        </div>
-        <div class="summary-grid" style="margin-top:16px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
-          <div class="summary-tile">
-            <span>Coût total</span>
-            <strong>{{ roiResult.cout_total_acquisition | number:'1.0-0' }}</strong>
-          </div>
-          <div class="summary-tile">
-            <span>Revenu annuel</span>
-            <strong>{{ roiResult.revenu_annuel_total | number:'1.0-0' }}</strong>
-          </div>
-          <div class="summary-tile">
-            <span>Classique</span>
-            <strong>{{ roiResult.revenu_annuel_classique | number:'1.0-0' }}</strong>
-          </div>
-          <div class="summary-tile">
-            <span>Estival</span>
-            <strong>{{ roiResult.revenu_annuel_estival | number:'1.0-0' }}</strong>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="card estimation-card" style="margin-top:20px">
+    <div class="card" style="margin-top:20px" *ngIf="mode === 'roi' || mode === 'location'">
       <div class="section-head">
         <div>
-          <p class="eyebrow">Références de marché</p>
-          <h2>Meilleures zones ROI</h2>
-          <p class="section-copy">Les zones avec le meilleur équilibre entre prix d’achat, loyer estimé et revenu estival.</p>
+          <p class="eyebrow">Repères de marché</p>
+          <h2>Rendement locatif brut par ville</h2>
+          <p class="section-copy">Appartements : loyer médian × 12 / prix de vente médian, villes avec au moins 5 annonces de chaque.</p>
         </div>
       </div>
-
-      <div class="table-wrap" *ngIf="topZones.length > 0; else zonesLoadingOrEmpty">
+      <div class="table-wrap" *ngIf="rendements.length; else rendVide">
         <table>
-          <thead>
-            <tr>
-              <th>Zone</th>
-              <th>Prix moyen</th>
-              <th>Loyer estimé</th>
-              <th>Prix nuit</th>
-              <th>Rendement net</th>
-              <th>Score</th>
-            </tr>
-          </thead>
+          <thead><tr><th>Ville</th><th>Rendement brut</th><th>Prix médian</th><th>Loyer médian</th><th></th></tr></thead>
           <tbody>
-            <tr *ngFor="let zone of topZones">
-              <td>
-                <div class="zone-name">{{ zone.zone_label || zone.ville || zone.gouvernorat || '—' }}</div>
-                <div class="zone-subtitle">{{ zone.nb_annonces }} annonces</div>
-              </td>
-              <td>{{ zone.prix_moyen | number:'1.0-0' }} TND</td>
-              <td>{{ zone.loyer_mensuel_estime | number:'1.0-0' }} TND</td>
-              <td>{{ zone.prix_nuit_estival_moyen ? (zone.prix_nuit_estival_moyen | number:'1.0-0') : '—' }}</td>
-              <td>{{ zone.rendement_net_pct | number:'1.0-1' }} %</td>
-              <td><span class="badge badge-info">{{ zone.score_roi }}/100</span></td>
+            <tr *ngFor="let z of rendements">
+              <td><strong>{{ z.ville }}</strong><div class="muted small">{{ z.n_vente }} ventes · {{ z.n_location }} locations</div></td>
+              <td><span class="badge badge-info">{{ z.rendement_brut_pct | number:'1.1-1' }} %</span></td>
+              <td>{{ z.prix_median | number:'1.0-0' }} TND</td>
+              <td>{{ z.loyer_median | number:'1.0-0' }} TND/mois</td>
+              <td><button type="button" class="btn-lien" (click)="simulerZone(z)">Simuler</button></td>
             </tr>
           </tbody>
         </table>
       </div>
-
-      <ng-template #zonesLoadingOrEmpty>
-        <div class="loading" style="justify-content:flex-start;padding:8px 0 0">
-          <span *ngIf="zonesLoading" class="spinner"></span>
-          <span>{{ zonesLoading ? 'Chargement des zones...' : 'Aucune zone disponible pour le moment.' }}</span>
-        </div>
-      </ng-template>
+      <ng-template #rendVide><p class="muted">Classement indisponible pour le moment.</p></ng-template>
     </div>
   `,
-  styles: [`
-    :host {
-      display: block;
-    }
-
-    .estimation-shell {
-      background: linear-gradient(180deg, rgba(10, 38, 64, 0.03), rgba(255, 255, 255, 0.98));
-      border: 1px solid rgba(26, 35, 126, 0.08);
-    }
-
-    .estimation-card {
-      border: 1px solid rgba(26, 35, 126, 0.08);
-      box-shadow: 0 18px 50px rgba(15, 23, 42, 0.06);
-    }
-
-    .insight-strip {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-      gap: 12px;
-      margin: 16px 0 18px;
-    }
-
-    .insight-card {
-      padding: 14px 16px;
-      border-radius: 16px;
-      background: linear-gradient(135deg, rgba(26, 35, 126, 0.08), rgba(0, 188, 212, 0.08));
-      border: 1px solid rgba(26, 35, 126, 0.08);
-    }
-
-    .insight-card span,
-    .zone-subtitle {
-      display: block;
-      color: var(--text-light);
-      font-size: 0.78rem;
-    }
-
-    .insight-card strong {
-      display: block;
-      margin-top: 4px;
-      color: var(--text-primary);
-      font-size: 0.96rem;
-    }
-
-    .zone-name {
-      font-weight: 700;
-      color: var(--text-primary);
-      text-transform: capitalize;
-    }
-
-    .table-wrap {
-      overflow-x: auto;
-      border-radius: 18px;
-      border: 1px solid rgba(26, 35, 126, 0.08);
-    }
-
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      min-width: 720px;
-    }
-
-    thead th {
-      background: rgba(26, 35, 126, 0.04);
-      color: var(--text-primary);
-      font-weight: 700;
-    }
-
-    tbody tr:hover {
-      background: rgba(0, 188, 212, 0.04);
-    }
-
-    td, th {
-      padding: 14px 16px;
-      border-bottom: 1px solid rgba(148, 163, 184, 0.18);
-      text-align: left;
-      white-space: nowrap;
-    }
-
-    tbody tr:last-child td {
-      border-bottom: none;
-    }
-  `]
+  styles: []
 })
 export class EstimationComponent implements OnInit {
-  estimationForm: FormGroup;
-  loading = false;
-  result: any = null;
-  error: string | null = null;
+  modes: { id: Mode; icone: string; libelle: string; aide: string; resultat: string; vide: string }[] = [
+    { id: 'vente', icone: '🏷️', libelle: 'Prix de vente', aide: 'Combien vaut ce bien ?', resultat: 'Prix de vente estimé',
+      vide: 'Indiquez au minimum la surface, puis lancez l\'estimation.' },
+    { id: 'location', icone: '🏠', libelle: 'Loyer mensuel', aide: 'Location à l\'année', resultat: 'Loyer mensuel estimé',
+      vide: 'Précisez la ville et la surface pour une estimation plus fiable.' },
+    { id: 'estival', icone: '🌊', libelle: 'Location estivale', aide: 'Prix par nuit', resultat: 'Prix par nuit estimé',
+      vide: 'Choisissez une ville balnéaire ; ajoutez le type et les chambres pour affiner.' },
+    { id: 'roi', icone: '📈', libelle: 'Rentabilité', aide: 'Rendement d\'un achat', resultat: '',
+      vide: 'Saisissez un prix d\'achat et un loyer et/ou un prix par nuit. Astuce : estimez-les dans les autres onglets.' },
+  ];
+  typesVente = [{ id: 'appartement', libelle: 'Appartement' }, { id: 'villa', libelle: 'Villa / maison' }, { id: 'terrain', libelle: 'Terrain' }];
+  chambres = [
+    { valeur: 0, libelle: 'Studio (S+0)' }, { valeur: 1, libelle: 'S+1' }, { valeur: 2, libelle: 'S+2' },
+    { valeur: 3, libelle: 'S+3' }, { valeur: 4, libelle: 'S+4' }, { valeur: 5, libelle: 'S+5 et +' },
+  ];
 
-  roiForm = { prix: null as number | null, loyer_mensuel: null as number | null, prix_nuit: null as number | null, nuits_an: 90 };
-  roiResult: any = null;
-  roiError: string | null = null;
-  roiLoading = false;
+  mode: Mode = 'vente';
+  vente = { zone: '', surface: null as number | null, type_bien: 'appartement', chambres: null as number | null, parking: false, ascenseur: false, piscine: false };
+  location = { zone: '', surface: null as number | null, type_bien: 'appartement', chambres: null as number | null, sdb: null as number | null, meuble: null as boolean | null };
+  estival = { ville: '', categorie: null as string | null, chambres: null as number | null, lits: null as number | null, surface: null as number | null, front_de_mer: null as boolean | null };
+  roi = { prix: null as number | null, loyer: null as number | null, nuit: null as number | null, nuits: 90 };
 
-  loyerForm = {
-    surface: null as number | null, ville: '', gouvernorat: '', type_bien: 'appartement',
-    nb_chambres: null as number | null, nb_sdb: null as number | null, meuble: null as boolean | null,
-  };
-  loyerResult: any = null;
-  loyerError: string | null = null;
-  loyerLoading = false;
+  resultat: Partial<Record<Mode, Resultat>> = {};
+  roiResultat: any = null;
+  erreurs: Record<string, string> = {};
+  erreur: string | null = null;
+  chargement = false;
 
-  estivalForm = {
-    ville: '', categorie: null as string | null, nb_chambres: null as number | null,
-    surface: null as number | null, nb_lits: null as number | null, front_de_mer: null as boolean | null,
-  };
-  estivalVilles: string[] = [];
-  estivalResult: any = null;
-  estivalError: string | null = null;
-  estivalLoading = false;
+  zones = { vente: [] as string[], location: [] as string[] };
+  villesEstivales: string[] = [];
+  rendements: any[] = [];
+  rendementMedian: number | null = null;
 
-  topZones: any[] = [];
-  zonesLoading = false;
+  constructor(private http: HttpClient) {}
 
-  constructor(private fb: FormBuilder, private http: HttpClient) {
-    this.estimationForm = this.fb.group({
-      surface: ['', [Validators.required, Validators.min(1)]],
-      type_bien: [''],
-      nb_pieces: [''],
-      nb_chambres: [''],
-      gouvernorat: [''],
-      has_parking: ['0'],
-      has_ascenseur: ['0'],
-      has_piscine: ['0'],
+  ngOnInit(): void {
+    this.restaurer();
+    for (const seg of ['vente', 'location'] as const) {
+      this.http.get<any>(API_BASE + '/api/annonces/zones', { params: { collection: `clean_${seg}` } })
+        .subscribe({ next: r => this.zones[seg] = (r.zones || []).map((z: any) => z.nom), error: () => {} });
+    }
+    this.http.get<any>(API_BASE + '/api/estival/villes').subscribe({ next: r => this.villesEstivales = r.villes || [], error: () => {} });
+    this.http.get<any>(API_BASE + '/api/stats/marche').subscribe({
+      next: r => { this.rendements = r.rendement_par_ville || []; this.rendementMedian = r.kpis?.rendement_brut_median_pct ?? null; },
+      error: () => {},
     });
   }
 
-  ngOnInit(): void {
-    this.loadTopZones();
-    this.http.get<any>(API_BASE + '/api/estival/villes')
-      .subscribe({ next: res => this.estivalVilles = res.villes || [], error: () => this.estivalVilles = [] });
+  modeCourant() {
+    return this.modes.find(m => m.id === this.mode)!;
+  }
+
+  changerMode(mode: Mode): void {
+    this.mode = mode;
+    this.erreurs = {};
+    this.erreur = null;
+    this.sauvegarder();
+  }
+
+  format(v: number): string {
+    return nf(v);
+  }
+
+  position(r: Resultat): number {
+    if (!r.bas || !r.haut || r.haut <= r.bas) return 50;
+    return Math.min(96, Math.max(4, (r.valeur - r.bas) / (r.haut - r.bas) * 100));
+  }
+
+  classeRoi(label: string): string {
+    return { excellent: 'badge-success', bon: 'badge-success', moyen: 'badge-warning', faible: 'badge-warning' }[label] || 'badge-danger';
+  }
+
+  texteVersRoi(): string {
+    return { vente: 'Calculer la rentabilité avec ce prix', location: 'Utiliser ce loyer pour la rentabilité',
+             estival: 'Utiliser ce prix par nuit pour la rentabilité', roi: '' }[this.mode];
+  }
+
+  versRentabilite(): void {
+    const r = this.resultat[this.mode];
+    if (!r) return;
+    if (this.mode === 'vente') this.roi.prix = Math.round(r.valeur);
+    if (this.mode === 'location') this.roi.loyer = Math.round(r.valeur);
+    if (this.mode === 'estival') this.roi.nuit = Math.round(r.valeur);
+    this.changerMode('roi');
+    if (this.roi.prix && (this.roi.loyer || this.roi.nuit)) this.estimer();
+  }
+
+  simulerZone(z: any): void {
+    this.roi.prix = Math.round(z.prix_median);
+    this.roi.loyer = Math.round(z.loyer_median);
+    this.roi.nuit = null;
+    this.changerMode('roi');
+    this.estimer();
+  }
+
+  reinitialiser(): void {
+    const vides: Record<Mode, () => void> = {
+      vente: () => this.vente = { zone: '', surface: null, type_bien: 'appartement', chambres: null, parking: false, ascenseur: false, piscine: false },
+      location: () => this.location = { zone: '', surface: null, type_bien: 'appartement', chambres: null, sdb: null, meuble: null },
+      estival: () => this.estival = { ville: '', categorie: null, chambres: null, lits: null, surface: null, front_de_mer: null },
+      roi: () => { this.roi = { prix: null, loyer: null, nuit: null, nuits: 90 }; this.roiResultat = null; },
+    };
+    vides[this.mode]();
+    delete this.resultat[this.mode];
+    this.erreurs = {};
+    this.erreur = null;
+    this.sauvegarder();
+  }
+
+  private valider(): boolean {
+    const e: Record<string, string> = {};
+    const positif = (v: any) => v !== null && v !== undefined && v !== '' && Number(v) > 0;
+    if (this.mode === 'vente' && !positif(this.vente.surface)) e['surface'] = 'La surface est nécessaire pour estimer un prix de vente.';
+    if (this.mode === 'location' && this.location.surface !== null && !positif(this.location.surface)) e['surface'] = 'La surface doit être positive.';
+    if (this.mode === 'estival' && !this.estival.ville) e['ville'] = 'Choisissez une ville.';
+    if (this.mode === 'roi') {
+      if (!positif(this.roi.prix)) e['prix'] = 'Indiquez le prix d\'achat.';
+      if (!positif(this.roi.loyer) && !positif(this.roi.nuit)) e['revenus'] = 'Indiquez un loyer mensuel et/ou un prix par nuit.';
+    }
+    this.erreurs = e;
+    return !Object.keys(e).length;
+  }
+
+  estimer(): void {
+    if (!this.valider() || this.chargement) return;
+    this.sauvegarder();
+    this.chargement = true;
+    this.erreur = null;
+    const mode = this.mode;
+    const p = (obj: Record<string, any>) => {
+      let params = new HttpParams();
+      Object.entries(obj).forEach(([k, v]) => { if (v !== null && v !== undefined && v !== '' && v !== false) params = params.set(k, String(v)); });
+      return params;
+    };
+    const fin = () => this.chargement = false;
+    const erreur = (err: any) => { this.erreur = this.messageErreur(err); fin(); };
+
+    if (mode === 'vente') {
+      const v = this.vente;
+      this.http.get<any>(API_BASE + '/api/vente/estimation', { params: p({
+        surface: v.surface, gouvernorat: v.zone.trim(), type_bien: v.type_bien, nb_chambres: v.chambres,
+        has_parking: v.parking ? 1 : 0, has_ascenseur: v.ascenseur ? 1 : 0, has_piscine: v.piscine ? 1 : 0,
+      }) }).subscribe({ next: r => {
+        this.resultat.vente = { valeur: r.prix_estime, bas: r.intervalle_bas, haut: r.intervalle_haut, unite: 'TND',
+          erreur: r.erreur_mediane_pct, zone: r.zone_reconnue ? this.titre(r.zone_reconnue) : null, zoneDemandee: v.zone.trim(),
+          details: [{ libelle: 'Prix au m²', valeur: `${nf(r.prix_estime / Number(v.surface))} TND/m²` }] };
+        fin();
+      }, error: erreur });
+    } else if (mode === 'location') {
+      const l = this.location;
+      this.http.get<any>(API_BASE + '/api/location/estimation', { params: p({
+        surface: l.surface, ville: l.zone.trim(), type_bien: l.type_bien, nb_chambres: l.chambres, nb_sdb: l.sdb,
+        meuble: l.meuble === null ? null : String(l.meuble),
+      }) }).subscribe({ next: r => {
+        const details = [];
+        if (r.prix_m2_reference) details.push({ libelle: 'Loyer au m²', valeur: `${nf(r.prix_m2_reference, 1)} TND/m²` });
+        if (r.n_annonces_entrainement) details.push({ libelle: 'Annonces de référence', valeur: nf(r.n_annonces_entrainement) });
+        this.resultat.location = { valeur: r.loyer_estime, bas: r.intervalle_bas, haut: r.intervalle_haut, unite: 'TND/mois',
+          erreur: r.erreur_mediane_pct, zone: r.zone_reconnue || null, zoneDemandee: l.zone.trim(), details };
+        fin();
+      }, error: erreur });
+    } else if (mode === 'estival') {
+      const e = this.estival;
+      this.http.get<any>(API_BASE + '/api/estival/estimation', { params: p({
+        ville: e.ville, categorie: e.categorie, nb_chambres: e.chambres, nb_lits: e.lits, surface: e.surface,
+        front_de_mer: e.front_de_mer === null ? null : String(e.front_de_mer),
+      }) }).subscribe({ next: r => {
+        const details = [{ libelle: 'Logements comparables dans la ville', valeur: nf(r.nb_annonces) }];
+        if (r.mediane_ville) details.push({ libelle: 'Médiane de la ville', valeur: `${nf(r.mediane_ville)} TND/nuit` });
+        this.resultat.estival = { valeur: r.prix_nuit_estime, bas: r.intervalle_bas, haut: r.intervalle_haut, unite: 'TND/nuit',
+          erreur: r.modele === 'M3-lightgbm' ? r.erreur_mediane_pct : null, zone: r.ville, details };
+        fin();
+      }, error: erreur });
+    } else {
+      this.http.get<any>(API_BASE + '/api/roi/calculer', { params: p({
+        prix: this.roi.prix, loyer_mensuel: this.roi.loyer, prix_nuit: this.roi.nuit, nuits_an: this.roi.nuit ? this.roi.nuits : null,
+      }) }).subscribe({ next: r => { this.roiResultat = r; fin(); }, error: erreur });
+    }
+  }
+
+  private titre(s: string): string {
+    return s.replace(/(^|\s)\S/g, c => c.toUpperCase());
   }
 
   /** Message lisible depuis une erreur HTTP FastAPI (detail texte ou liste de validation). */
-  private apiError(err: any): string {
+  private messageErreur(err: any): string {
     const detail = err?.error?.detail;
-    if (!err?.status) return 'Erreur de connexion au serveur';
+    if (!err?.status) return 'Service momentanément indisponible, réessayez dans quelques instants.';
     if (typeof detail === 'string') return detail;
-    if (Array.isArray(detail) && detail.length) {
-      return detail.map((d: any) => `${(d.loc || []).slice(-1)[0]} : ${d.msg}`).join(' · ');
-    }
+    if (Array.isArray(detail) && detail.length) return 'Valeur invalide : ' + detail.map((d: any) => (d.loc || []).slice(-1)[0]).join(', ');
     return `Erreur serveur (${err.status})`;
   }
 
-  onSubmit(): void {
-    if (this.estimationForm.invalid) return;
-    this.loading = true;
-    this.result = null;
-    this.error = null;
-
-    let params = new HttpParams();
-    const formVal = this.estimationForm.value;
-    Object.keys(formVal).forEach(key => {
-      if (formVal[key] !== null && formVal[key] !== undefined && formVal[key] !== '') {
-        params = params.set(key, formVal[key]);
-      }
-    });
-
-    this.http.get<any>(API_BASE + '/api/vente/estimation', { params })
-      .subscribe({
-        next: res => {
-          if (res.statut === 'erreur') {
-            this.error = res.message;
-          } else {
-            this.result = res;
-          }
-          this.loading = false;
-        },
-        error: err => {
-          this.error = this.apiError(err);
-          this.loading = false;
-        }
-      });
+  private sauvegarder(): void {
+    try {
+      sessionStorage.setItem(CLE_STOCKAGE, JSON.stringify({ mode: this.mode, vente: this.vente, location: this.location, estival: this.estival, roi: this.roi }));
+    } catch { /* stockage indisponible : formulaires non conservés */ }
   }
 
-  estimateLoyer(): void {
-    this.loyerLoading = true;
-    this.loyerResult = null;
-    this.loyerError = null;
-    let params = new HttpParams();
-    const f = this.loyerForm;
-    if (f.surface) params = params.set('surface', f.surface);
-    if (f.ville) params = params.set('ville', f.ville);
-    if (f.gouvernorat) params = params.set('gouvernorat', f.gouvernorat);
-    params = params.set('type_bien', f.type_bien);
-    if (f.nb_chambres !== null && f.nb_chambres !== undefined) params = params.set('nb_chambres', f.nb_chambres);
-    if (f.nb_sdb !== null && f.nb_sdb !== undefined) params = params.set('nb_sdb', f.nb_sdb);
-    if (f.meuble !== null) params = params.set('meuble', f.meuble);
-
-    this.http.get<any>(API_BASE + '/api/location/estimation', { params })
-      .subscribe({
-        next: res => {
-          if (res.statut === 'erreur') {
-            this.loyerError = res.message;
-          } else {
-            this.loyerResult = res;
-          }
-          this.loyerLoading = false;
-        },
-        error: err => {
-          this.loyerError = this.apiError(err);
-          this.loyerLoading = false;
-        }
-      });
-  }
-
-  estimateEstival(): void {
-    if (!this.estivalForm.ville) return;
-    this.estivalLoading = true;
-    this.estivalResult = null;
-    this.estivalError = null;
-
-    let params = new HttpParams().set('ville', this.estivalForm.ville);
-    const e = this.estivalForm;
-    if (e.categorie) params = params.set('categorie', e.categorie);
-    for (const key of ['nb_chambres', 'surface', 'nb_lits'] as const) {
-      if (e[key] !== null && e[key] !== undefined) params = params.set(key, e[key] as number);
-    }
-    if (e.front_de_mer !== null) params = params.set('front_de_mer', e.front_de_mer);
-
-    this.http.get<any>(API_BASE + '/api/estival/estimation', { params })
-      .subscribe({
-        next: res => {
-          if (res.statut === 'erreur') {
-            this.estivalError = res.message;
-          } else {
-            this.estivalResult = res;
-          }
-          this.estivalLoading = false;
-        },
-        error: err => {
-          this.estivalError = this.apiError(err);
-          this.estivalLoading = false;
-        }
-      });
-  }
-
-  calculateRoi(): void {
-    if (!this.roiForm.prix) return;
-    this.roiLoading = true;
-    this.roiResult = null;
-    this.roiError = null;
-    let params = new HttpParams();
-    params = params.set('prix', this.roiForm.prix);
-    if (this.roiForm.loyer_mensuel) params = params.set('loyer_mensuel', this.roiForm.loyer_mensuel);
-    if (this.roiForm.prix_nuit) params = params.set('prix_nuit', this.roiForm.prix_nuit);
-    params = params.set('nuits_an', this.roiForm.nuits_an || 90);
-
-    this.http.get<any>(API_BASE + '/api/roi/calculer', { params })
-      .subscribe({
-        next: res => { this.roiResult = res; this.roiLoading = false; },
-        error: err => { this.roiError = this.apiError(err); this.roiLoading = false; }
-      });
-  }
-
-  loadTopZones(): void {
-    this.zonesLoading = true;
-    this.http.get<any>(API_BASE + '/api/roi/top_zones', { params: { limit: 5 } as any })
-      .subscribe({
-        next: res => {
-          const raw = Array.isArray(res?.data) ? res.data : [];
-          const sanitize = (v: any) => {
-            if (!v) return '';
-            try { v = String(v); } catch(e) { return ''; }
-            v = v.replace(/[^A-Za-zÀ-ÿ\s\-]/g, ' ').replace(/\s+/g, ' ').trim();
-            if (!v || /\d/.test(v) || v.length < 2) return '';
-            return v.toLowerCase();
-          };
-          let mapped = raw.map((z: any) => ({
-            ...z,
-            zone_label: sanitize(z.zone_label) || sanitize(z.ville) || sanitize(z.gouvernorat) || '',
-            ville: sanitize(z.ville) || '',
-            gouvernorat: sanitize(z.gouvernorat) || '',
-          }));
-          // remove empty labels, sort by score desc, and title-case labels
-          mapped = mapped.filter((z: any) => z.zone_label && z.zone_label.length > 0);
-          mapped.sort((a: any, b: any) => (b.score_roi || 0) - (a.score_roi || 0));
-          mapped.forEach((z: any) => { z.zone_label = this.titleCase(z.zone_label); });
-          this.topZones = mapped;
-          this.zonesLoading = false;
-        },
-        error: () => {
-          this.topZones = [];
-          this.zonesLoading = false;
-        }
-      });
-  }
-
-  titleCase(s: string): string {
-    return s.replace(/\w\S*/g, (txt) => txt.charAt(0).toUpperCase() + txt.substr(1));
+  private restaurer(): void {
+    try {
+      const s = JSON.parse(sessionStorage.getItem(CLE_STOCKAGE) || 'null');
+      if (!s) return;
+      this.mode = s.mode || this.mode;
+      Object.assign(this.vente, s.vente || {});
+      Object.assign(this.location, s.location || {});
+      Object.assign(this.estival, s.estival || {});
+      Object.assign(this.roi, s.roi || {});
+    } catch { /* ignoré */ }
   }
 }

@@ -46,8 +46,16 @@ class DemandeChat(BaseModel):
     messages: list[Message] = Field(..., min_length=1, max_length=30)
 
 
+# Derrière le reverse proxy nginx (Docker), toutes les requêtes viennent de l'IP du proxy :
+# l'IP du visiteur est lue dans X-Real-IP, seulement si TRUST_PROXY=1 (sinon un client
+# appelant l'API directement pourrait falsifier l'en-tête pour contourner la limite)
+TRUST_PROXY = os.getenv("TRUST_PROXY", "0") == "1"
+
+
 def _client_id(request: Request):
     ip = request.client.host if request.client else "inconnu"
+    if TRUST_PROXY:
+        ip = request.headers.get("x-real-ip") or ip
     return hashlib.sha256(ip.encode()).hexdigest()[:16]
 
 

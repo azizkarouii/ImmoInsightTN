@@ -6,12 +6,14 @@ from etl.cleaner import run as run_cleaner
 from etl.deduplicator import run as run_dedup
 from etl.geocoder import run as run_geocoder
 from etl.feature_engineer import run as run_features
+from etl import qualite
 
 def run_pipeline():
     print("\n" + "=" * 50)
     print("  IMMOINSIGHT TN - PIPELINE ETL COMPLET")
     print("=" * 50)
 
+    qualite.reinitialiser()
     run_cleaner()
     run_dedup()
     run_geocoder()
@@ -38,6 +40,21 @@ def run_pipeline():
                 "clean_vente", "clean_location", "clean_estival"]:
         count = db[col].count_documents({})
         print(f"  {col}: {count} docs")
+
+    # Rapport qualité du passage (visible dans la page Statistiques)
+    volumes = {
+        clean: {
+            "annonces_brutes": db[clean.replace("clean_", "raw_")].count_documents({}),
+            "annonces_propres": db[clean].count_documents({}),
+            "sans_coordonnees": db[clean].count_documents({"lat": None}),
+            "sans_surface": db[clean].count_documents({"surface": None}),
+        }
+        for clean in ["clean_vente", "clean_location", "clean_estival"]
+    }
+    rapport = qualite.sauvegarder_rapport(db, volumes)
+    print("\n  QUALITE")
+    for col, compteurs in rapport["collections"].items():
+        print(f"  {col}: " + ", ".join(f"{k}={v}" for k, v in compteurs.items()))
     print("[ETL] Termine")
 
     # Show sample features

@@ -1,0 +1,70 @@
+# ImmoInsight TN — stack complète
+#   docker compose up -d --build        puis http://localhost:8080
+# Les secrets (GROQ_API_KEY) viennent du fichier .env (voir .env.example).
+
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: .
+    image: immoinsight-backend
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      MONGO_URI: mongodb://mongo:27017
+      MONGO_DB: immoinsight
+      TRUST_PROXY: "1"
+    volumes:
+      # Modèles entraînés et cache de géocodage partagés avec le scheduler (ré-entraînement hebdomadaire)
+      - ./models:/app/models
+      - ./data:/app/data
+    ports:
+      - "127.0.0.1:8000:8000"   # accès direct à l'API (docs : /docs) depuis la machine uniquement
+    depends_on:
+      mongo:
+        condition: service_healthy
+
+  scheduler:
+    image: immoinsight-backend
+    restart: unless-stopped
+    command: ["python", "-m", "scrapers.main", "--scheduler"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      MONGO_URI: mongodb://mongo:27017
+      MONGO_DB: immoinsight
+    volumes:
+      - ./models:/app/models
+      - ./data:/app/data
+      - ./logs:/app/logs
+    healthcheck:
+      disable: true
+    depends_on:
+      mongo:
+        condition: service_healthy
+      api:
+        condition: service_started
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  mongo-data:

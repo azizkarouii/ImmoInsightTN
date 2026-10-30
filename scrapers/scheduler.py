@@ -58,6 +58,16 @@ JOBS = [
         "collecte": True,
     },
     {
+        "id": "mubawab_refresh",
+        "label": "Mubawab — annonces sans prix",
+        "description": "Re-visite les annonces sans prix (prix sur demande, erreur de lecture précédente)",
+        "cron": {"day_of_week": "sat", "hour": 3, "minute": 0},
+        "jours": "Samedi à 03:00",
+        "commande": ["-m", "scrapers.main", "mubawab_refresh"],
+        "timeout_min": 60,
+        "collecte": True,
+    },
+    {
         "id": "booking",
         "label": "Booking — locations estivales",
         "description": "Appartements, maisons de vacances et villas de 24 villes (prix pour J+7)",

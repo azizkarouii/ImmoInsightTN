@@ -1,3 +1,4 @@
+import { API_BASE } from './api.config';
 import { Component, OnInit } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { FormsModule, ReactiveFormsModule, FormBuilder, FormGroup, Validators } from '@angular/forms';
@@ -527,7 +528,7 @@ export class EstimationComponent implements OnInit {
 
   ngOnInit(): void {
     this.loadTopZones();
-    this.http.get<any>('http://localhost:8000/api/estival/villes')
+    this.http.get<any>(API_BASE + '/api/estival/villes')
       .subscribe({ next: res => this.estivalVilles = res.villes || [], error: () => this.estivalVilles = [] });
   }
 
@@ -556,7 +557,7 @@ export class EstimationComponent implements OnInit {
       }
     });
 
-    this.http.get<any>('http://localhost:8000/api/vente/estimation', { params })
+    this.http.get<any>(API_BASE + '/api/vente/estimation', { params })
       .subscribe({
         next: res => {
           if (res.statut === 'erreur') {
@@ -587,7 +588,7 @@ export class EstimationComponent implements OnInit {
     if (f.nb_sdb !== null && f.nb_sdb !== undefined) params = params.set('nb_sdb', f.nb_sdb);
     if (f.meuble !== null) params = params.set('meuble', f.meuble);
 
-    this.http.get<any>('http://localhost:8000/api/location/estimation', { params })
+    this.http.get<any>(API_BASE + '/api/location/estimation', { params })
       .subscribe({
         next: res => {
           if (res.statut === 'erreur') {
@@ -618,7 +619,7 @@ export class EstimationComponent implements OnInit {
     }
     if (e.front_de_mer !== null) params = params.set('front_de_mer', e.front_de_mer);
 
-    this.http.get<any>('http://localhost:8000/api/estival/estimation', { params })
+    this.http.get<any>(API_BASE + '/api/estival/estimation', { params })
       .subscribe({
         next: res => {
           if (res.statut === 'erreur') {
@@ -646,7 +647,7 @@ export class EstimationComponent implements OnInit {
     if (this.roiForm.prix_nuit) params = params.set('prix_nuit', this.roiForm.prix_nuit);
     params = params.set('nuits_an', this.roiForm.nuits_an || 90);
 
-    this.http.get<any>('http://localhost:8000/api/roi/calculer', { params })
+    this.http.get<any>(API_BASE + '/api/roi/calculer', { params })
       .subscribe({
         next: res => { this.roiResult = res; this.roiLoading = false; },
         error: err => { this.roiError = this.apiError(err); this.roiLoading = false; }
@@ -655,7 +656,7 @@ export class EstimationComponent implements OnInit {
 
   loadTopZones(): void {
     this.zonesLoading = true;
-    this.http.get<any>('http://localhost:8000/api/roi/top_zones', { params: { limit: 5 } as any })
+    this.http.get<any>(API_BASE + '/api/roi/top_zones', { params: { limit: 5 } as any })
       .subscribe({
         next: res => {
           const raw = Array.isArray(res?.data) ? res.data : [];

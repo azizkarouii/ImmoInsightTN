@@ -110,6 +110,30 @@ SHORT_STAY_RE = r"(?i)(?:\bpar nuit|/ ?nuit\b|nuit[ée]e|\bpar jour\b|/ ?jour\b|
 RENTAL_TITLE_RE = re.compile(r"(?:\b[àa]\s+louer\b|\blocation\b)", re.IGNORECASE)
 
 
+PRIX_BORNES = {
+    "estival": (20, 10_000),
+    "vente": (10_000, 5_000_000),
+    "location": (LOYER_MIN, LOYER_MAX),
+}
+
+
+def clean_price_history(history, prix_min, prix_max):
+    """Garde les points de prix plausibles et retire les répétitions consécutives."""
+    if not isinstance(history, list):
+        return []
+    propre = []
+    for point in history:
+        if not isinstance(point, dict):
+            continue
+        prix = point.get("prix")
+        if not isinstance(prix, (int, float)) or not (prix_min <= prix <= prix_max):
+            continue
+        if propre and propre[-1]["prix"] == prix:
+            continue
+        propre.append({"prix": prix, "date": point.get("date")})
+    return propre
+
+
 def is_rental_title(titre):
     """Annonce de location publiée dans une rubrique vente (fréquent sur Tayara)."""
     return bool(titre) and bool(RENTAL_TITLE_RE.search(str(titre)))
@@ -277,6 +301,17 @@ def clean_collection(collection_name):
     # Remove entries without price
     df = df[df["prix"].notna()]
 
+    # Annonces retirées (vérifiées hors ligne) : gardées dans raw_* pour les alertes,
+    # exclues des statistiques et des modèles
+    if "status" in df.columns:
+        df = df[df["status"].ne("supprime")]
+
+    # Historique de prix : mêmes bornes que les prix (les erreurs de scraping, ex.
+    # prix x1000, produisaient de fausses variations de prix)
+    if "price_history" in df.columns:
+        bornes = PRIX_BORNES.get(next((k for k in PRIX_BORNES if k in collection_name), ""), (1, float("inf")))
+        df["price_history"] = df["price_history"].apply(lambda h: clean_price_history(h, *bornes))
+
     print(f"  [CLEAN] {collection_name}: {len(raw)} -> {len(df)} annonces propres")
     return df
 
@@ -284,19 +319,28 @@ def save_clean(df, clean_name):
     if df.empty:
         return
     db = get_db()
-    col = db[clean_name]
-    col.drop()  # Reset clean collection
     records = df.to_dict("records")
     for r in records:
         r.pop("_id", None)
-        # NaN pandas -> null Mongo (sinon "nan" est relu comme texte, ex. par le géocodeur)
         for k, v in r.items():
+            # Types numpy (np.bool_, np.int64...) non encodables par Mongo
+            if isinstance(v, np.generic):
+                v = v.item()
+                r[k] = v
+            # NaN pandas -> null Mongo (sinon "nan" est relu comme texte, ex. par le géocodeur)
             if isinstance(v, float) and np.isnan(v):
                 r[k] = None
-    col.insert_many(records)
-    col.create_index([("url", ASCENDING)], unique=True)
+
+    # Écriture dans une collection temporaire puis renommage : en cas d'erreur,
+    # l'ancienne collection reste intacte (auparavant elle était supprimée avant
+    # l'insertion et pouvait rester vide ou partielle)
+    tmp = db[f"{clean_name}_tmp"]
+    tmp.drop()
+    tmp.insert_many(records)
+    tmp.create_index([("url", ASCENDING)], unique=True)
     if "lat" in df.columns:
-        col.create_index([("lat", ASCENDING), ("lon", ASCENDING)])
+        tmp.create_index([("lat", ASCENDING), ("lon", ASCENDING)])
+    tmp.rename(clean_name, dropTarget=True)
     print(f"  [CLEAN] Sauvegardé {len(records)} dans {clean_name}")
 
 def run():

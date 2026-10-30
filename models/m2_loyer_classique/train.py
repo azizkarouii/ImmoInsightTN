@@ -166,7 +166,7 @@ def evaluate(docs, n_splits=5, repeats=3):
                 "erreur_mediane_pct": round(float(np.median(err) * 100), 1),
                 "part_a_20pct": round(float(np.mean(err <= 0.2) * 100), 1)}
 
-    return {name: scores(p) for name, p in preds.items()}, ratios
+    return {name: scores(p) for name, p in preds.items()}, ratios, preds["modele"]
 
 
 def run():
@@ -192,7 +192,7 @@ def run():
             os.remove(model_path)
         return
 
-    resultats, ratios = evaluate(docs)
+    resultats, ratios, oof = evaluate(docs)
     for name, sc in resultats.items():
         print(f"  [M2] CV {name:15} erreur mediane={sc['erreur_mediane_pct']:5.1f}%  "
               f"<=20%: {sc['part_a_20pct']:4.1f}%  MAE={sc['mae']:.0f} DT")
@@ -207,6 +207,9 @@ def run():
     df = to_frame(docs)
     model, encoders = fit_model(df)
     joblib.dump(model, model_path)
+
+    from models.opportunites import save_oof
+    save_oof("clean_location", [d.get("url") for d in docs], oof)
     metrics = {
         "n": len(df),
         "cv": resultats,

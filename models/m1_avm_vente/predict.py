@@ -1,5 +1,6 @@
 import os
 import json
+from functools import lru_cache
 import joblib
 import numpy as np
 import pandas as pd
@@ -13,7 +14,13 @@ MONGO_DB = os.getenv("MONGO_DB", "immoinsight")
 MODEL_DIR = os.path.join(os.path.dirname(__file__), "artifacts")
 
 
-def load_model():
+def _signature():
+    """Change quand les modèles sont ré-entraînés (invalide le cache)."""
+    return tuple(os.path.getmtime(os.path.join(MODEL_DIR, f)) for f in ["xgb.pkl", "lgb.pkl", "meta.pkl"])
+
+
+@lru_cache(maxsize=1)
+def _load_model_cached(signature):
     xgb_model = joblib.load(os.path.join(MODEL_DIR, "xgb.pkl"))
     lgb_model = joblib.load(os.path.join(MODEL_DIR, "lgb.pkl"))
     meta = joblib.load(os.path.join(MODEL_DIR, "meta.pkl"))
@@ -32,6 +39,10 @@ def load_model():
     return xgb_model, lgb_model, meta, features, metrics, zones
 
 
+def load_model():
+    return _load_model_cached(_signature())
+
+
 def _zone_profile(annonce, zones):
     for field in ["ville", "gouvernorat"]:
         key = norm_zone(annonce.get(field))
@@ -40,10 +51,7 @@ def _zone_profile(annonce, zones):
     return None, {}
 
 
-def predict_one(annonce):
-    xgb_model, lgb_model, meta, feature_names, metrics, zones = load_model()
-    log_target = metrics.get("target_transform") == "log1p"
-
+def _row(annonce, feature_names, zones):
     row = {f: annonce.get(f, np.nan) for f in feature_names}
 
     # Localisation : features géographiques médianes de la zone demandée
@@ -57,18 +65,27 @@ def predict_one(annonce):
     for t in ["appartement", "villa", "terrain"]:
         if f"type_{t}" in row:
             row[f"type_{t}"] = float(type_bien == t)
+    return row, zone
 
+
+def predict_many(annonces):
+    """Prix estimés pour une liste d'annonces (modèles chargés une seule fois)."""
+    xgb_model, lgb_model, meta, feature_names, metrics, zones = load_model()
+    rows, zone_list = zip(*[_row(a, feature_names, zones) for a in annonces]) if annonces else ([], [])
     # Les champs optionnels arrivent à None : sans conversion la colonne est de
     # dtype object et XGBoost refuse la prédiction. NaN est géré nativement.
-    row_df = pd.DataFrame([row], columns=feature_names).apply(pd.to_numeric, errors="coerce").astype(float)
+    X = pd.DataFrame(list(rows), columns=feature_names).apply(pd.to_numeric, errors="coerce").astype(float)
+    pred_xgb = xgb_model.predict(X)
+    pred_lgb = lgb_model.predict(X)
+    prix = meta.predict(np.column_stack([pred_xgb, pred_lgb]))
+    if metrics.get("target_transform") == "log1p":
+        pred_xgb, pred_lgb, prix = np.expm1(pred_xgb), np.expm1(pred_lgb), np.expm1(prix)
+    return prix, pred_xgb, pred_lgb, list(zone_list), metrics
 
-    pred_xgb = xgb_model.predict(row_df)[0]
-    pred_lgb = lgb_model.predict(row_df)[0]
-    stack_input = np.array([[pred_xgb, pred_lgb]])
-    prix_estime = meta.predict(stack_input)[0]
-    if log_target:
-        pred_xgb, pred_lgb, prix_estime = np.expm1([pred_xgb, pred_lgb, prix_estime])
 
+def predict_one(annonce):
+    prix, pred_xgb, pred_lgb, zones, metrics = predict_many([annonce])
+    prix_estime = prix[0]
     # Intervalle à 80 % mesuré en validation croisée (±10 % fixe auparavant,
     # alors que l'erreur médiane réelle dépasse 20 %)
     bas, haut = metrics.get("ratio_p10", 0.9), metrics.get("ratio_p90", 1.1)
@@ -76,9 +93,9 @@ def predict_one(annonce):
         "prix_estime": round(float(prix_estime), 2),
         "intervalle_bas": round(float(prix_estime * bas), 2),
         "intervalle_haut": round(float(prix_estime * haut), 2),
-        "prix_xgb": round(float(pred_xgb), 2),
-        "prix_lgb": round(float(pred_lgb), 2),
-        "zone_reconnue": zone,
+        "prix_xgb": round(float(pred_xgb[0]), 2),
+        "prix_lgb": round(float(pred_lgb[0]), 2),
+        "zone_reconnue": zones[0],
     }
 
 

@@ -126,6 +126,8 @@ def train_stacking(X, y, n_splits=5):
     }
     print(f"  [M1] Erreur mediane={metrics['erreur_mediane_pct']}%, "
           f"intervalle 80%: x{metrics['ratio_p10']} - x{metrics['ratio_p90']}")
+    # Prédictions hors échantillon (DT), réutilisées pour les alertes « opportunités »
+    metrics["_oof"] = np.expm1(oof_stack)
     return final_xgb, final_lgb, meta, metrics
 
 
@@ -187,7 +189,11 @@ def run():
 
     # Cible log : distribution des prix très asymétrique, et évite les prix négatifs
     xgb_model, lgb_model, meta, metrics = train_stacking(X, np.log1p(y))
+    oof = metrics.pop("_oof")
     save_model(xgb_model, lgb_model, meta, metrics, list(X.columns), build_zone_profiles(df))
+
+    from models.opportunites import save_oof
+    save_oof("clean_vente", df.loc[X.index, "url"].tolist(), oof)
 
     print("  [M1] Entrainement termine.\n")
 

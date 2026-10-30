@@ -1868,4 +1868,67 @@ Corrigé aussi : regex du géocodeur (`_names_known_city`) qui ne reconnaissait 
 
 Encodage des zones par niveau de prix lissé (`models/zone_encoding.py`). Chaque modèle n'est adopté que s'il bat sa référence ; sinon repli automatique (barème M2, médiane par ville M3). API : M2 accepte `nb_sdb`, `gouvernorat`, `meuble` ; M3 accepte `categorie`, `nb_chambres`, `surface`, `nb_lits`, `nb_sdb`, `front_de_mer`, `dist_plage_km`. **Tests** : 84.
 
+### 17.15 Mise à jour Octobre 2026 — Collecte automatique et alertes opérationnelles
+
+**Constat** : le scheduler et les alertes existaient mais ne fonctionnaient pas.
+- 2e job Scrapy du scheduler → `ReactorNotRestartable` (un seul reactor Twisted par processus) ; idem pour `scrapers.main all`.
+- Les scrapers n'étaient jamais suivis de l'ETL : l'API et les alertes ne voyaient pas les nouvelles données.
+- Afariat, Dar Tunisia et Inside Airbnb (sources mortes) planifiés ; job manqué (machine en veille) abandonné ; aucune trace d'exécution.
+- Alertes toujours vides : dates stockées en texte ISO comparées à des `datetime` (idem `nouveaux_7j`, `/annonces/recentes`) ; statut `"supprimé"` écrit / `"supprime"` lu ; « prix changés » sans calcul de variation ; retrait déduit de la seule absence (faux positifs au-delà des pages parcourues).
+- `save_clean` supprimait la collection avant l'insertion (vide/partielle en cas d'erreur).
+
+**Scheduler** (`scrapers/scheduler.py`) : chaque job dans un sous-processus avec timeout, journalisé dans `scheduler_logs`, rattrapage 6 h, ETL et ré-entraînement attendant la fin des collectes. Planning (Africa/Tunis) : Tayara incrémental tous les jours 02:00 (arrêt après 2 pages sans nouveauté, ~4 min) et complet le dimanche 01:00 ; Mubawab 3 pages/catégorie lundi et jeudi 03:00 ; Booking mardi et vendredi 04:00 ; vérification des retraits 06:00 ; ETL 06:45 ; ré-entraînement M1/M2/M3 dimanche 09:00 (`models.train_all`) ; rapport 09:30 (`alert_reports`). Commandes : `--scheduler`, `planning`, `job <id>` ; `scripts/lancer_scheduler.bat`.
+
+**Retraits** : re-visite des annonces non revues depuis 14 jours (404/410 ou redirection hors de l'annonce = retirée ; 429/erreur = indéterminé, source mise en pause). Premier passage : 105 retraits confirmés, 45 en ligne.
+
+**Alertes** (`/api/alertes/…`) : `nouvelles`, `prix` (ancien/nouveau/variation %, sens), `supprimees`, `opportunites` (prix sous l'estimation hors échantillon des modèles, seuil = 10e percentile des écarts du modèle : -35 % vente, -39 % location), `resume`, `scheduler`. Étape ETL 6 `models/opportunites.py` (estimations OOF enregistrées à l'entraînement).
+
+**Frontend** : page Alertes refaite (indicateurs, filtres collection/période, tableaux par type, planning et statut des collectes) ; barre d'état (dernière/prochaine collecte, nouveautés 24 h, badge) à la place du bandeau ; statistiques sans doublons, médianes, variations de prix en % ; onglets chargés à la demande (bundle initial 698 → 232 kB) ; locale fr-FR ; URL de l'API centralisée (`api.config.ts`).
+
+**Divers** : `README.md` créé ; `requirements.txt` (ajout fastapi/uvicorn/scipy, retrait de tensorflow, transformers, prophet, shap… inutilisés) ; cache des modèles M1 ; historique de prix nettoyé à l'ETL ; annonces retirées exclues des collections propres. **Tests** : 104.
+
+### 17.16 Mise à jour Octobre 2026 — Assistant conversationnel (chatbot)
+
+**Objectif** : un assistant ouvert à tous les visiteurs, principalement en français, qui répond **uniquement à partir des
+données de la plateforme** (annonces, statistiques, modèles M1–M3, alertes, collecte), sous forme de widget flottant.
+
+**Architecture : appel d'outils (function calling), pas de RAG.** Les données sont structurées et chiffrées : le LLM
+choisit un outil et remplit ses paramètres, le backend exécute la requête en lecture seule et renvoie un résultat
+exact, le LLM rédige la réponse. Le LLM n'écrit jamais de requête Mongo.
+
+```
+Widget Angular ──POST /api/chat──► FastAPI ──► agent (prompt système + boucle d'outils)
+                                                  │            ▲
+                                         Groq (LLM)│            │ résultats compacts
+                                                  ▼            │
+                                       api/chat/tools.py ──► MongoDB clean_* / modèles M1–M3 / alertes
+```
+
+| Fichier | Rôle |
+|---|---|
+| `api/chat/tools.py` | 6 outils validés par JSON Schema : `rechercher_annonces`, `statistiques_marche`, `estimer_prix` (M1/M2/M3), `alertes_marche`, `etat_plateforme`, `calculer_rentabilite` |
+| `api/chat/llm.py` | Seul module lié au fournisseur (Groq) : bascule de modèle sur quota ou appel d'outil mal formé |
+| `api/chat/agent.py` | Prompt système (règles d'ancrage), boucle d'outils (4 tours max), sources, historique nettoyé |
+| `api/routers/chat.py` | `POST /api/chat`, `GET /api/chat/suggestions` ; limite par visiteur, cache, journal `chat_logs` |
+| `frontend/src/app/chat-widget.component.ts` | Widget flottant (chargé en différé), suggestions, annonces citées, Markdown sûr |
+| `scripts/eval_chatbot.py` | Évaluation sur 14 questions types (valeurs attendues calculées par les outils) |
+
+**Fournisseur et modèles** : Groq (`GROQ_API_KEY` dans `.env`, jamais côté navigateur). Évaluation sur 14 questions :
+`openai/gpt-oss-120b` **14/14** (après correctifs ; ~3 300 tokens et ~1,6 s par question) contre 7/14 pour
+`qwen/qwen3.8-27b` (quotas, appel d'outil mal formé). Modèle principal `gpt-oss-120b`, `qwen` en secours de quota
+(`GROQ_MODELS`).
+
+**Garde-fous**
+- Réponses fondées uniquement sur les résultats d'outils ; « je n'ai pas cette information » sinon ; critères, nombre d'annonces et date de mise à jour cités ; estimations données avec leur fourchette.
+- Arguments d'outils validés (JSON Schema, `additionalProperties: false`, bornes) ; erreurs renvoyées au modèle pour qu'il se corrige ; repli si le modèle invente un gouvernorat (ex. Ennasr « à Tunis »).
+- Textes d'annonces traités comme des données non fiables (tronqués, sans caractères de contrôle, consigne explicite) ; pas de données personnelles ; hors sujet décliné.
+- Le client ne peut envoyer que des messages `user`/`assistant` (2 000 caractères max, 10 derniers gardés) : le prompt système reste côté serveur.
+- Rendu Markdown du widget sur texte échappé (pas d'injection HTML).
+
+**Quota (offre gratuite Groq : ~8 000 tokens/min et 1 000 requêtes/jour par modèle)** : bascule immédiate sur le
+second modèle, cache 15 min des questions sans historique (suggestions), limite de 20 questions / 10 min par visiteur
+(IP hachée). Pour une mise en production ouverte au public, prévoir l'offre payante Groq.
+
+**Tests** : 26 tests dédiés (outils sur la base réelle, agent et endpoint avec LLM simulé) — 130 au total.
+
 *Document maintenu par Mohamed Aziz Karoui — ImmoInsight TN — 2025 — Mise à jour Juillet 2026*

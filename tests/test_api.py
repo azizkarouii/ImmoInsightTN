@@ -10,15 +10,6 @@ import pytest
 pytestmark = pytest.mark.mongo
 
 
-@pytest.fixture
-def client(mongo_available):
-    if not mongo_available:
-        pytest.skip("MongoDB local indisponible")
-    from fastapi.testclient import TestClient
-    from api.main import app
-    return TestClient(app)
-
-
 class TestRoot:
     def test_root(self, client):
         r = client.get("/")

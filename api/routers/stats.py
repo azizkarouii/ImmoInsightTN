@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 from pymongo import MongoClient
 from dotenv import load_dotenv
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from statistics import mean, median
 from collections import Counter
 import os
@@ -63,12 +63,14 @@ def stats_globales():
         "estival": "clean_estival",
     }
     stats = {}
+    overviews = {}
     for key, col in collections.items():
-        overview = _collection_overview(col)
+        overview = overviews[key] = _collection_overview(col)
         stats[key] = {
             "total": db[col].count_documents({}),
+            # Dates stockées en texte ISO (UTC) : comparaison en texte
             "nouveaux_7j": db[col].count_documents({
-                "scraped_at": {"$gte": datetime.now() - timedelta(days=7)}
+                "first_seen": {"$gte": (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=7)).isoformat()}
             }),
             "avec_gps": db[col].count_documents({"lat": {"$ne": None}, "lon": {"$ne": None}}),
             "couverture_gps_pct": overview["couverture_gps_pct"],
@@ -86,8 +88,9 @@ def stats_globales():
         prix_moyen[col] = round(result[0]["moyen"], 2) if result else None
 
     prix_median = {
-        col: _collection_overview(col)["prix"]
-        for col in ["clean_vente", "clean_estival"]
+        "clean_vente": overviews["vente"]["prix"],
+        "clean_location": overviews["location"]["prix"],
+        "clean_estival": overviews["estival"]["prix"],
     }
 
     total_geo = sum(s["avec_gps"] for s in stats.values())
@@ -117,10 +120,11 @@ def prix_par_gouvernorat(
     collection: str = "clean_vente",
 ):
     pipeline = [
-        {"$match": {"prix": {"$ne": None}, "gouvernorat": {"$ne": None}}},
+        {"$match": {"prix": {"$ne": None}, "gouvernorat": {"$nin": [None, ""]}}},
         {"$group": {
             "_id": "$gouvernorat",
             "prix_moyen": {"$avg": "$prix"},
+            "prix_median": {"$median": {"input": "$prix", "method": "approximate"}},
             "prix_min": {"$min": "$prix"},
             "prix_max": {"$max": "$prix"},
             "count": {"$sum": 1},
@@ -136,10 +140,11 @@ def prix_par_ville(
     collection: str = "clean_estival",
 ):
     pipeline = [
-        {"$match": {"prix": {"$ne": None}, "ville": {"$ne": None}}},
+        {"$match": {"prix": {"$ne": None}, "ville": {"$nin": [None, ""]}}},
         {"$group": {
             "_id": "$ville",
             "prix_moyen": {"$avg": "$prix"},
+            "prix_median": {"$median": {"input": "$prix", "method": "approximate"}},
             "prix_min": {"$min": "$prix"},
             "prix_max": {"$max": "$prix"},
             "count": {"$sum": 1},

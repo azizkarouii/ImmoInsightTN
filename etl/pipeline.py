@@ -21,6 +21,10 @@ def run_pipeline():
     from models.m4_fraude.train import run as run_fiabilite
     run_fiabilite()
 
+    # Écart prix affiché / estimation des modèles (alertes « opportunités »)
+    from models.opportunites import run as run_opportunites
+    run_opportunites()
+
     # Bilan final
     from pymongo import MongoClient
     from dotenv import load_dotenv
@@ -34,6 +38,7 @@ def run_pipeline():
                 "clean_vente", "clean_location", "clean_estival"]:
         count = db[col].count_documents({})
         print(f"  {col}: {count} docs")
+    print("[ETL] Termine")
 
     # Show sample features
     print("\n  Echantillon features clean_vente:")

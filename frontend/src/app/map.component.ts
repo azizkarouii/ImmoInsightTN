@@ -1,3 +1,4 @@
+import { API_BASE } from './api.config';
 import { Component, AfterViewInit, OnDestroy } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { CommonModule } from '@angular/common';
@@ -144,7 +145,7 @@ export class MapComponent implements AfterViewInit, OnDestroy {
     this.error = null;
 
     this.request = this.http
-      .get<{ total: number, data: any[] }>('http://localhost:8000/api/annonces/carte', {
+      .get<{ total: number, data: any[] }>(API_BASE + '/api/annonces/carte', {
         params: { collection: this.selectedCollection, limit: 5000 },
       })
       .subscribe({

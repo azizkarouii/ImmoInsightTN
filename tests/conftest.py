@@ -23,3 +23,13 @@ def mongo_available():
         return True
     except Exception:
         return False
+
+
+@pytest.fixture
+def client(mongo_available):
+    """Client de test de l'API (tests ignorés sans MongoDB local)."""
+    if not mongo_available:
+        pytest.skip("MongoDB local indisponible")
+    from fastapi.testclient import TestClient
+    from api.main import app
+    return TestClient(app)

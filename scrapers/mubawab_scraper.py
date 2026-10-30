@@ -25,6 +25,7 @@ SC_CATEGORIES = [
     ("estival", "appartements-vacational", 1),
 ]
 PAGES_PAR_SLUG = {slug: pages for _, slug, pages in SC_CATEGORIES}
+PAGES_RAPIDE = 3
 PAGE_RE = re.compile(r":p:(\d+)$")
 
 # Pages par ville — sous-catégories découvertes depuis la homepage
@@ -100,9 +101,10 @@ class MubawabSpider(scrapy.Spider):
         "COOKIES_ENABLED": False,
     }
 
-    def __init__(self, start_urls=None, annonces=None, *args, **kwargs):
+    def __init__(self, start_urls=None, annonces=None, max_pages=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.db = get_db()
+        self.max_pages = max_pages
         if start_urls:
             self.start_urls = list(start_urls)
         # Mode rafraîchissement : [(url_annonce, type_offre)] visitées directement
@@ -138,7 +140,8 @@ class MubawabSpider(scrapy.Spider):
             slug = ""
         type_offre = _type_offre_from_slug(slug)
 
-        if "/fr/sc/" in url and annonce_links and page < PAGES_PAR_SLUG.get(slug, 1):
+        limite = min(PAGES_PAR_SLUG.get(slug, 1), self.max_pages or 10**6)
+        if "/fr/sc/" in url and annonce_links and page < limite:
             yield response.follow(f"{url}:p:{page + 1}", callback=self.parse)
 
         for link in annonce_links:
@@ -300,9 +303,15 @@ def _build_start_urls(cities=None):
     return urls
 
 
-def run_mubawab(cities=None):
+def run_mubawab(cities=None, rapide=False):
+    """rapide : seulement les pages nationales, limitées à PAGES_RAPIDE pages par
+    catégorie (passage planifié bi-hebdomadaire ; le site renvoie des 429 au-delà)."""
     process = CrawlerProcess()
-    process.crawl(MubawabSpider, start_urls=_build_start_urls(cities))
+    if rapide:
+        urls = [f"https://www.mubawab.tn/fr/sc/{slug}" for _, slug, _ in SC_CATEGORIES]
+        process.crawl(MubawabSpider, start_urls=urls, max_pages=PAGES_RAPIDE)
+    else:
+        process.crawl(MubawabSpider, start_urls=_build_start_urls(cities))
     process.start()
 
 

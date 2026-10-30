@@ -13,6 +13,7 @@ CATEGORIES = {
     "maisons": "https://www.tayara.tn/listing/c/immobilier/maisons-et-villas/",
 }
 MAX_PAGES = {"appartements": 40, "maisons": 30}  # 30 annonces par page
+PAGES_SANS_NOUVEAUTE = 2
 
 # Catégories d'annonces résidentielles suivies (URL /item/<categorie>/...)
 CATEGORIES_RESIDENTIELLES = {
@@ -96,11 +97,20 @@ class TayaraSpider(scrapy.Spider):
         },
     }
 
-    def __init__(self, categories=None, *args, **kwargs):
+    def __init__(self, categories=None, incremental=False, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.db = get_db()
         self.categories = categories or list(CATEGORIES)
         self.stats = {"new": 0, "updated": 0, "price_changed": 0, "ignorees": 0}
+        # Mode incrémental : arrêt d'une catégorie après PAGES_SANS_NOUVEAUTE pages
+        # ne contenant que des annonces déjà connues (les listes sont triées par date)
+        self.incremental = incremental
+        self.ids_connus = set()
+        if incremental:
+            for col in ["raw_vente", "raw_location"]:
+                for doc in self.db[col].find({"source": "tayara"}, {"url": 1}):
+                    self.ids_connus.add(doc["url"].rstrip("/").split("/")[-1])
+        self.pages_sans_nouveaute = {}
 
     async def start(self):
         # Point d'entrée de Scrapy >= 2.13 (start_requests n'est plus appelé seul)
@@ -127,6 +137,13 @@ class TayaraSpider(scrapy.Spider):
         for link in links:
             yield response.follow(link, callback=self.parse_annonce)
 
+        if self.incremental:
+            nouveaux = ids - self.ids_connus
+            self.pages_sans_nouveaute[base] = 0 if nouveaux else self.pages_sans_nouveaute.get(base, 0) + 1
+            if self.pages_sans_nouveaute[base] >= PAGES_SANS_NOUVEAUTE:
+                print(f"[TAYARA] {base} : {PAGES_SANS_NOUVEAUTE} pages sans nouvelle annonce, arret")
+                return
+
         if hits and page < max_pages:
             yield scrapy.Request(f"{base}?page={page + 1}", callback=self.parse,
                                  cb_kwargs={"page": page + 1, "max_pages": max_pages, "base": base})
@@ -149,7 +166,7 @@ class TayaraSpider(scrapy.Spider):
         print(f"[TAYARA] Termine ({reason}) : {self.stats}")
 
 
-def run_tayara(categories=None):
+def run_tayara(categories=None, incremental=False):
     process = CrawlerProcess()
-    process.crawl(TayaraSpider, categories=categories)
+    process.crawl(TayaraSpider, categories=categories, incremental=incremental)
     process.start()

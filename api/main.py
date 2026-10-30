@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from .routers import annonces, estimation, fiabilite, stats, alerte, roi
+from .routers import annonces, estimation, fiabilite, stats, alerte, roi, chat
 
 app = FastAPI(
     title="ImmoInsight TN API",
@@ -22,6 +22,7 @@ app.include_router(fiabilite.router, prefix="/api/fiabilite", tags=["Fiabilite"]
 app.include_router(stats.router, prefix="/api", tags=["Stats"])
 app.include_router(alerte.router, prefix="/api/alertes", tags=["Alertes"])
 app.include_router(roi.router, prefix="/api", tags=["ROI"])
+app.include_router(chat.router, prefix="/api/chat", tags=["Assistant"])
 
 
 @app.get("/")

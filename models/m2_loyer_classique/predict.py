@@ -2,6 +2,7 @@ import os
 import re
 import json
 import statistics
+import joblib
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -133,7 +134,44 @@ def _prix_m2_pour(annonce, refs):
     return refs.get("prix_m2_mediane") or REF_MARCHE_MEDIANE, "defaut"
 
 
+def _charger_modele():
+    model_path = os.path.join(MODEL_DIR, "model.pkl")
+    metrics_path = os.path.join(MODEL_DIR, "metrics.json")
+    if not (os.path.exists(model_path) and os.path.exists(metrics_path)):
+        return None
+    with open(metrics_path, encoding="utf-8") as f:
+        metrics = json.load(f)
+    return joblib.load(model_path), metrics
+
+
 def predict_one(annonce):
+    """Loyer estimé par le modèle appris, ou par le barème de références à défaut."""
+    charge = _charger_modele()
+    if charge is None:
+        return predict_reference(annonce)
+
+    from models.zone_encoding import ZoneEncoder
+    from models.m2_loyer_classique.train import to_frame, predict_frame
+
+    model, metrics = charge
+    encoders = {k: ZoneEncoder.from_dict(v) for k, v in metrics["encoders"].items()}
+    df = to_frame([{**annonce, "prix": None}])
+    loyer = float(predict_frame(model, encoders, df)[0])
+    surface = annonce.get("surface")
+    zone = next((annonce.get(k) for k in ["ville", "gouvernorat"] if encoders[k].known(annonce.get(k))), None)
+    return {
+        "loyer_estime": round(loyer, 2),
+        "prix_m2_reference": round(loyer / surface, 2) if surface else None,
+        "intervalle_bas": round(loyer * metrics["ratio_p10"], 2),
+        "intervalle_haut": round(loyer * metrics["ratio_p90"], 2),
+        "modele": "M2-lightgbm",
+        "source_reference": f"zone:{zone}" if zone else "zone inconnue",
+        "zone_reconnue": zone,
+        "n_annonces_entrainement": metrics["n"],
+    }
+
+
+def predict_reference(annonce):
     refs = _charger_references()
     prix_m2, source = _prix_m2_pour(annonce, refs)
     surface = annonce.get("surface")

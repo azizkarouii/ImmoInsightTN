@@ -158,6 +158,31 @@ class TestEstimation:
         assert "Hammamet" in r.json()["detail"]
 
 
+    def test_location_loyer_croissant_avec_surface(self, client):
+        loyers = [
+            client.get("/api/location/estimation", params={"surface": s, "ville": "La Marsa", "nb_chambres": 2}).json()["loyer_estime"]
+            for s in [50, 90, 150, 250]
+        ]
+        assert loyers == sorted(loyers)
+
+    def test_location_type_invalide(self, client):
+        assert client.get("/api/location/estimation", params={"surface": 90, "type_bien": "terrain"}).status_code == 422
+
+    def test_estival_caracteristiques(self, client):
+        base = {"ville": "Hammamet", "categorie": "appartement", "surface": 90, "nb_lits": 4}
+        prix = [
+            client.get("/api/estival/estimation", params={**base, "nb_chambres": n}).json()["prix_nuit_estime"]
+            for n in [1, 2, 3]
+        ]
+        assert prix == sorted(prix)
+        j = client.get("/api/estival/estimation", params={**base, "nb_chambres": 2}).json()
+        assert j["intervalle_bas"] < j["prix_nuit_estime"] < j["intervalle_haut"]
+
+    def test_estival_parametre_invalide(self, client):
+        r = client.get("/api/estival/estimation", params={"ville": "Hammamet", "categorie": "chateau"})
+        assert r.status_code == 422
+
+
 class TestROI:
     def test_calculer(self, client):
         r = client.get("/api/roi/calculer", params={"prix": 300000, "loyer_mensuel": 1500})

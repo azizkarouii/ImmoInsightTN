@@ -1,6 +1,7 @@
 import os
 import json
 import unicodedata
+import joblib
 from pymongo import MongoClient
 from dotenv import load_dotenv
 
@@ -31,12 +32,21 @@ def load_model():
         return json.load(f)
 
 
+def _charger_modele():
+    model_path = os.path.join(MODEL_DIR, "model.pkl")
+    metrics_path = os.path.join(MODEL_DIR, "metrics.json")
+    if not (os.path.exists(model_path) and os.path.exists(metrics_path)):
+        return None
+    with open(metrics_path, encoding="utf-8") as f:
+        metrics = json.load(f)
+    return joblib.load(model_path), metrics
+
+
 def villes_couvertes():
     return sorted(load_model()["par_ville"])
 
 
-def predict_one(ville):
-    refs = load_model()
+def _resoudre_ville(ville, refs):
     par_ville = {_norm(v): v for v in refs["par_ville"]}
     key = _norm(ville)
     key = ALIAS_VILLES.get(key, key)
@@ -44,15 +54,48 @@ def predict_one(ville):
         raise VilleInconnue(
             f"Ville '{ville}' non couverte. Villes disponibles : {', '.join(sorted(refs['par_ville']))}"
         )
-    ref = refs["par_ville"][par_ville[key]]
+    return par_ville[key]
+
+
+def predict_one(ville, categorie=None, nb_chambres=None, surface=None, nb_lits=None,
+                nb_sdb=None, front_de_mer=None, dist_plage_km=None):
+    refs = load_model()
+    nom_ville = _resoudre_ville(ville, refs)
+    ref = refs["par_ville"][nom_ville]
+    caracteristiques = {
+        "categorie": categorie, "nb_chambres": nb_chambres, "surface": surface,
+        "nb_lits": nb_lits, "nb_sdb": nb_sdb, "front_de_mer": front_de_mer,
+        "dist_plage_km": dist_plage_km,
+    }
+    charge = _charger_modele()
+
+    # Sans caractéristiques du logement, la référence de la ville est la meilleure estimation
+    if charge is None or all(v is None for v in caracteristiques.values()):
+        return {
+            "ville": nom_ville,
+            "prix_nuit_estime": ref["median"],
+            # Intervalle = moitié centrale des annonces observées (P25-P75)
+            "intervalle_bas": ref["p25"],
+            "intervalle_haut": ref["p75"],
+            "nb_annonces": ref["n"],
+            "modele": "M3-reference-ville",
+        }
+
+    from models.zone_encoding import ZoneEncoder
+    from models.m3_pricing_estival.train import to_frame, predict_frame
+
+    model, metrics = charge
+    encoder = ZoneEncoder.from_dict(metrics["encoder"])
+    df = to_frame([{**caracteristiques, "ville": nom_ville, "prix": None}])
+    prix = float(predict_frame(model, encoder, df)[0])
     return {
-        "ville": par_ville[key],
-        "prix_nuit_estime": ref["median"],
-        # Intervalle = moitié centrale des annonces observées (P25-P75)
-        "intervalle_bas": ref["p25"],
-        "intervalle_haut": ref["p75"],
+        "ville": nom_ville,
+        "prix_nuit_estime": round(prix, 2),
+        "intervalle_bas": round(prix * metrics["ratio_p10"], 2),
+        "intervalle_haut": round(prix * metrics["ratio_p90"], 2),
         "nb_annonces": ref["n"],
-        "modele": "M3-reference-ville",
+        "mediane_ville": ref["median"],
+        "modele": "M3-lightgbm",
     }
 
 

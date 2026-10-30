@@ -1845,4 +1845,27 @@ Améliorations :
 
 Corrigé aussi : regex du géocodeur (`_names_known_city`) qui ne reconnaissait jamais une ville connue. **Tests** : 66.
 
+### 17.14 Mise à jour Octobre 2026 — Collecte enrichie (capacité Booking, locations) et modèles appris
+
+**Scrapers corrigés / enrichis**
+
+| Source | Problème | Correction |
+|---|---|---|
+| **Booking** | Filtre `entire_place=1` ignoré (chambres d'hôtel en pension mélangées), aucune capacité, URL avec dates comme clé (doublons à chaque passage) | Filtres `ht_id` 201/220/213 (appartements, maisons de vacances, villas), extraction par carte : type de logement, chambres, salons, SdB, surface, lits, pension, note, nb d'avis, distance centre/plage, front de mer, nb de nuits (`parse_booking_card`). URL canonique sans paramètres |
+| **Tayara** | Anciennes URLs redirigées vers « Immobilier » non filtré (`"Vente" in url` toujours faux) → 0 location ; prix par regex sur toute la page | Lecture de `__NEXT_DATA__` (prix, superficie, chambres, SdB, gouvernorat, délégation) ; transaction lue dans l'annonce (« À Louer » / « À Vendre ») ; pagination des sous-catégories `appartements` et `maisons-et-villas` (`parse_tayara_ad`). Point d'entrée `start()` pour Scrapy ≥ 2.13 |
+| **Mubawab** | Sélecteur `a[...], a[...]::attr(href)` → balises `<a>` enregistrées comme URLs ; pagination `?p=N` inopérante ; prix « TND » ou capté au hasard dans la page (×1000) | Sélecteur corrigé, pagination `:p:N` (25 pages d'appartements à louer, villas, maisons), extraction par JSON-LD `RealEstateListing` puis bloc principal ; `python -m scrapers.main mubawab_refresh` pour re-visiter les annonces sans prix |
+| `upsert_annonce` | Nouveaux champs jamais écrits sur les annonces existantes | Remplissage générique des champs manquants + `refresh_fields` (champs volatils) |
+
+**Volumes** (après nettoyage/déduplication) : clean_vente 104 → **1 172**, clean_location 4 → **1 305**, clean_estival 176 → **673** (logements entiers uniquement). Nettoyage : loyers 250–15 000 DT, 2–80 DT/m², exclusion des loyers à la nuit/semaine ; estival : chambres d'hôtel retirées.
+
+**Modèles** (validation croisée, erreur médiane) :
+
+| Modèle | Avant | Après | Référence naïve |
+|---|---|---|---|
+| M1 vente (XGB+LGB, profondeur 5, monotone surface) | ~28 % (55 biens) | **20,7 %** (1 051) | 47,6 % (médiane) |
+| M2 loyer (LightGBM, zones encodées, meublé) | barème (4 annonces) | **22,0 %** (1 305) | 28,8 % (barème) |
+| M3 estival (LightGBM sur caractéristiques) | 49 % (médiane ville) | **29,4 %** (671) | 43,6 % (médiane ville) |
+
+Encodage des zones par niveau de prix lissé (`models/zone_encoding.py`). Chaque modèle n'est adopté que s'il bat sa référence ; sinon repli automatique (barème M2, médiane par ville M3). API : M2 accepte `nb_sdb`, `gouvernorat`, `meuble` ; M3 accepte `categorie`, `nb_chambres`, `surface`, `nb_lits`, `nb_sdb`, `front_de_mer`, `dist_plage_km`. **Tests** : 84.
+
 *Document maintenu par Mohamed Aziz Karoui — ImmoInsight TN — 2025 — Mise à jour Juillet 2026*

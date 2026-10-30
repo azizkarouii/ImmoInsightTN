@@ -1,6 +1,6 @@
 import sys
 import asyncio
-from .mubawab_scraper import run_mubawab
+from .mubawab_scraper import run_mubawab, run_mubawab_refresh
 from .tayara_scraper import run_tayara
 from .afariat_scraper import run_afariat
 from .booking_scraper import scrape_booking
@@ -15,6 +15,7 @@ def main():
     if len(sys.argv) < 2:
         print("Usage:")
         print("  python -m scrapers.main mubawab      → Scraper Mubawab maintenant")
+        print("  python -m scrapers.main mubawab_refresh → Re-visiter les annonces Mubawab sans prix")
         print("  python -m scrapers.main tayara       → Scraper Tayara maintenant")
         print("  python -m scrapers.main afariat      → Scraper Afariat maintenant")
         print("  python -m scrapers.main booking      → Scraper Booking maintenant")
@@ -33,6 +34,9 @@ def main():
         if len(sys.argv) > 2:
             cities = [c.strip() for c in sys.argv[2].split(",") if c.strip()]
         run_mubawab(cities=cities)
+
+    elif cmd == "mubawab_refresh":
+        run_mubawab_refresh()
 
     elif cmd == "tayara":
         print("[TAYARA] Scraper recrit en Scrapy")

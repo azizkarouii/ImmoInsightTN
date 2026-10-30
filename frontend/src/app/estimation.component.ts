@@ -154,7 +154,7 @@ import { CommonModule } from '@angular/common';
     <div class="card estimation-card" style="margin-top:20px">
       <h2>🏠 Estimation de loyer mensuel (M2)</h2>
       <p style="color:var(--text-secondary);margin-bottom:20px;font-size:0.9rem">
-        Référence marché par zone et type de bien.
+        Modèle appris sur les annonces de location Tayara / Mubawab (repli : barème de références par zone).
       </p>
       <div class="form-grid">
         <div class="form-group">
@@ -162,8 +162,12 @@ import { CommonModule } from '@angular/common';
           <input type="number" [(ngModel)]="loyerForm.surface" placeholder="ex: 90" />
         </div>
         <div class="form-group">
-          <label>Ville</label>
-          <input type="text" [(ngModel)]="loyerForm.ville" placeholder="ex: La Marsa, Tunis..." />
+          <label>Ville / délégation</label>
+          <input type="text" [(ngModel)]="loyerForm.ville" placeholder="ex: La Marsa, Ennasr..." />
+        </div>
+        <div class="form-group">
+          <label>Gouvernorat</label>
+          <input type="text" [(ngModel)]="loyerForm.gouvernorat" placeholder="ex: Tunis, Ariana..." />
         </div>
         <div class="form-group">
           <label>Type de bien</label>
@@ -173,8 +177,20 @@ import { CommonModule } from '@angular/common';
           </select>
         </div>
         <div class="form-group">
-          <label>Nombre de pièces</label>
-          <input type="number" [(ngModel)]="loyerForm.nb_pieces" placeholder="ex: 3" />
+          <label>Chambres</label>
+          <input type="number" min="0" [(ngModel)]="loyerForm.nb_chambres" placeholder="ex: 2 (S+2)" />
+        </div>
+        <div class="form-group">
+          <label>Salles de bain</label>
+          <input type="number" min="0" [(ngModel)]="loyerForm.nb_sdb" placeholder="ex: 1" />
+        </div>
+        <div class="form-group">
+          <label>Meublé</label>
+          <select [(ngModel)]="loyerForm.meuble">
+            <option [ngValue]="null">Non précisé</option>
+            <option [ngValue]="true">Oui</option>
+            <option [ngValue]="false">Non</option>
+          </select>
         </div>
       </div>
       <button class="btn btn-accent" (click)="estimateLoyer()" [disabled]="loyerLoading">
@@ -188,12 +204,13 @@ import { CommonModule } from '@angular/common';
           {{ loyerResult.loyer_estime | number:'1.0-0' }} TND / mois
         </div>
         <div class="result-range">
-          Intervalle (±15 %) :
+          {{ loyerResult.modele === 'M2-lightgbm' ? 'Intervalle à 80 % (erreurs mesurées)' : 'Intervalle (±15 %)' }} :
           <strong>{{ loyerResult.intervalle_bas | number:'1.0-0' }}</strong> —
           <strong>{{ loyerResult.intervalle_haut | number:'1.0-0' }}</strong> TND
         </div>
         <div style="margin-top:12px;font-size:0.8rem;color:var(--text-light)">
-          Référence : {{ loyerResult.prix_m2_reference }} DT/m²/mois · {{ loyerResult.modele }}
+          <span *ngIf="loyerResult.prix_m2_reference">{{ loyerResult.prix_m2_reference }} DT/m²/mois · </span>{{ loyerResult.modele }}
+          <span *ngIf="loyerResult.modele === 'M2-lightgbm'"> · {{ loyerResult.zone_reconnue ? 'zone : ' + loyerResult.zone_reconnue : 'zone inconnue des données' }}</span>
         </div>
       </div>
       <div *ngIf="loyerError" class="result-box" style="background:#fbe9e7">
@@ -214,6 +231,35 @@ import { CommonModule } from '@angular/common';
             <option *ngFor="let v of estivalVilles" [value]="v">{{ v }}</option>
           </select>
         </div>
+        <div class="form-group">
+          <label>Type de logement</label>
+          <select [(ngModel)]="estivalForm.categorie">
+            <option [ngValue]="null">Non précisé</option>
+            <option value="appartement">Appartement</option>
+            <option value="maison_vacances">Maison de vacances</option>
+            <option value="villa">Villa</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Chambres</label>
+          <input type="number" min="0" [(ngModel)]="estivalForm.nb_chambres" placeholder="ex: 2" />
+        </div>
+        <div class="form-group">
+          <label>Surface (m²)</label>
+          <input type="number" min="1" [(ngModel)]="estivalForm.surface" placeholder="ex: 90" />
+        </div>
+        <div class="form-group">
+          <label>Lits</label>
+          <input type="number" min="1" [(ngModel)]="estivalForm.nb_lits" placeholder="ex: 4" />
+        </div>
+        <div class="form-group">
+          <label>Front de mer</label>
+          <select [(ngModel)]="estivalForm.front_de_mer">
+            <option [ngValue]="null">Non précisé</option>
+            <option [ngValue]="true">Oui</option>
+            <option [ngValue]="false">Non</option>
+          </select>
+        </div>
       </div>
       <button class="btn btn-accent" (click)="estimateEstival()" [disabled]="estivalLoading || !estivalForm.ville">
         <span *ngIf="estivalLoading" class="spinner" style="display:inline-block;width:16px;height:16px;border-width:2px;margin-right:6px;vertical-align:middle"></span>
@@ -226,10 +272,13 @@ import { CommonModule } from '@angular/common';
           {{ estivalResult.prix_nuit_estime | number:'1.0-0' }} TND / nuit
         </div>
         <div class="result-range">
-          Moitié centrale des annonces :
+          {{ estivalResult.modele === 'M3-lightgbm' ? 'Intervalle à 80 % (erreurs mesurées)' : 'Moitié centrale des annonces' }} :
           <strong>{{ estivalResult.intervalle_bas | number:'1.0-0' }}</strong> —
           <strong>{{ estivalResult.intervalle_haut | number:'1.0-0' }}</strong> TND / nuit
-          ({{ estivalResult.nb_annonces }} annonces)
+          ({{ estivalResult.nb_annonces }} annonces dans la ville)
+        </div>
+        <div class="result-range" *ngIf="estivalResult.mediane_ville">
+          Médiane de la ville : <strong>{{ estivalResult.mediane_ville | number:'1.0-0' }}</strong> TND / nuit
         </div>
       </div>
 
@@ -443,12 +492,18 @@ export class EstimationComponent implements OnInit {
   roiError: string | null = null;
   roiLoading = false;
 
-  loyerForm = { surface: null as number | null, ville: '', type_bien: 'appartement', nb_pieces: null as number | null };
+  loyerForm = {
+    surface: null as number | null, ville: '', gouvernorat: '', type_bien: 'appartement',
+    nb_chambres: null as number | null, nb_sdb: null as number | null, meuble: null as boolean | null,
+  };
   loyerResult: any = null;
   loyerError: string | null = null;
   loyerLoading = false;
 
-  estivalForm = { ville: '' };
+  estivalForm = {
+    ville: '', categorie: null as string | null, nb_chambres: null as number | null,
+    surface: null as number | null, nb_lits: null as number | null, front_de_mer: null as boolean | null,
+  };
   estivalVilles: string[] = [];
   estivalResult: any = null;
   estivalError: string | null = null;
@@ -526,8 +581,11 @@ export class EstimationComponent implements OnInit {
     const f = this.loyerForm;
     if (f.surface) params = params.set('surface', f.surface);
     if (f.ville) params = params.set('ville', f.ville);
+    if (f.gouvernorat) params = params.set('gouvernorat', f.gouvernorat);
     params = params.set('type_bien', f.type_bien);
-    if (f.nb_pieces) params = params.set('nb_pieces', f.nb_pieces);
+    if (f.nb_chambres !== null && f.nb_chambres !== undefined) params = params.set('nb_chambres', f.nb_chambres);
+    if (f.nb_sdb !== null && f.nb_sdb !== undefined) params = params.set('nb_sdb', f.nb_sdb);
+    if (f.meuble !== null) params = params.set('meuble', f.meuble);
 
     this.http.get<any>('http://localhost:8000/api/location/estimation', { params })
       .subscribe({
@@ -552,7 +610,13 @@ export class EstimationComponent implements OnInit {
     this.estivalResult = null;
     this.estivalError = null;
 
-    const params = new HttpParams().set('ville', this.estivalForm.ville);
+    let params = new HttpParams().set('ville', this.estivalForm.ville);
+    const e = this.estivalForm;
+    if (e.categorie) params = params.set('categorie', e.categorie);
+    for (const key of ['nb_chambres', 'surface', 'nb_lits'] as const) {
+      if (e[key] !== null && e[key] !== undefined) params = params.set(key, e[key] as number);
+    }
+    if (e.front_de_mer !== null) params = params.set('front_de_mer', e.front_de_mer);
 
     this.http.get<any>('http://localhost:8000/api/estival/estimation', { params })
       .subscribe({

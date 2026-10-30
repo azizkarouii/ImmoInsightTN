@@ -101,6 +101,11 @@ def clean_titre(val):
 
 SURFACE_MIN, SURFACE_MAX = 15, 2000
 
+# Loyers mensuels plausibles (DT) et loyer au m² (DT/m²/mois)
+LOYER_MIN, LOYER_MAX = 250, 15000
+LOYER_M2_MIN, LOYER_M2_MAX = 2, 80
+SHORT_STAY_RE = r"(?i)(?:\bpar nuit|/ ?nuit\b|nuit[ée]e|\bpar jour\b|/ ?jour\b|\bpar semaine\b|/ ?semaine\b|\bestival|\bvacances\b)"
+
 
 RENTAL_TITLE_RE = re.compile(r"(?:\b[àa]\s+louer\b|\blocation\b)", re.IGNORECASE)
 
@@ -251,7 +256,23 @@ def clean_collection(collection_name):
     if "vente" in collection_name:
         df = df[(df["prix"].isna()) | ((df["prix"] >= 10000) & (df["prix"] <= 5000000))]
     elif "location" in collection_name and "estival" not in collection_name:
-        df = df[(df["prix"].isna()) | ((df["prix"] >= 100) & (df["prix"] <= 10000))]
+        before = len(df)
+        # Loyers à la nuit / à la semaine publiés en location classique
+        if "titre" in df.columns:
+            df = df[~df["titre"].fillna("").str.contains(SHORT_STAY_RE)]
+        df = df[(df["prix"].isna()) | ((df["prix"] >= LOYER_MIN) & (df["prix"] <= LOYER_MAX))]
+        if "surface" in df.columns:
+            loyer_m2 = pd.to_numeric(df["prix"], errors="coerce") / pd.to_numeric(df["surface"], errors="coerce")
+            df = df[loyer_m2.isna() | ((loyer_m2 >= LOYER_M2_MIN) & (loyer_m2 <= LOYER_M2_MAX))]
+        print(f"  [CLEAN] {before - len(df)} loyers hors norme retires")
+
+    # Booking renvoie aussi des chambres d'hôtel (pension) : seuls les logements
+    # entiers correspondent à une location saisonnière d'un bien
+    if "estival" in collection_name and "logement_entier" in df.columns:
+        before = len(df)
+        is_booking = df["source"].eq("booking")
+        df = df[~is_booking | df["logement_entier"].eq(True)]
+        print(f"  [CLEAN] {before - len(df)} chambres d'hotel / types inconnus retires")
 
     # Remove entries without price
     df = df[df["prix"].notna()]

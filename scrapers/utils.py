@@ -38,7 +38,12 @@ def compute_hash(item: dict) -> str:
     content = f"{item.get('titre','')}{item.get('prix','')}{item.get('surface','')}{item.get('description','')}{item.get('ville','')}{item.get('gouvernorat','')}{item.get('type_bien','')}"
     return hashlib.md5(content.encode("utf-8")).hexdigest()
 
-def upsert_annonce(collection, item: dict, key_field="url"):
+def upsert_annonce(collection, item: dict, key_field="url", refresh_fields=()):
+    """Insère ou met à jour une annonce.
+
+    refresh_fields : champs volatils réécrits à chaque passage (note, nb d'avis...).
+    Les autres champs ne sont écrits que s'ils manquaient dans le document existant.
+    """
     existing = collection.find_one({key_field: item[key_field]})
     new_hash = compute_hash(item)
     item["content_hash"] = new_hash
@@ -71,6 +76,16 @@ def upsert_annonce(collection, item: dict, key_field="url"):
         updates["type_bien"] = item["type_bien"]
     if not existing.get("type_offre") and item.get("type_offre"):
         updates["type_offre"] = item["type_offre"]
+
+    # Nouveaux champs ajoutés aux scrapers (chambres, lits, pension...) : complétés
+    # sur les annonces déjà connues
+    for field, value in item.items():
+        if field in updates or field in (key_field, "prix", "content_hash", "scraped_at"):
+            continue
+        if value in (None, "", []):
+            continue
+        if field in refresh_fields or existing.get(field) in (None, "", []):
+            updates[field] = value
 
     if existing.get("prix") != item.get("prix") and item.get("prix"):
         updates["prix"] = item["prix"]

@@ -49,28 +49,46 @@ def estimer_location(
     surface: float = Query(None, gt=0, le=10000, description="Surface en m²"),
     nb_pieces: int = Query(None, ge=1, le=50),
     nb_chambres: int = Query(None, ge=0, le=50),
-    ville: str = Query(None),
-    type_bien: str = Query("appartement", pattern="^(appartement|villa|terrain)$"),
+    nb_sdb: int = Query(None, ge=0, le=20),
+    ville: str = Query(None, description="Ville ou délégation (ex: La Marsa, Ennasr)"),
+    gouvernorat: str = Query(None),
+    type_bien: str = Query("appartement", pattern="^(appartement|villa)$"),
+    meuble: bool = Query(None),
 ):
     from models.m2_loyer_classique.predict import predict_one
     annonce = {
         "surface": surface,
         "nb_pieces": nb_pieces,
         "nb_chambres": nb_chambres,
+        "nb_sdb": nb_sdb,
         "ville": ville,
+        "gouvernorat": gouvernorat,
         "type_bien": type_bien,
+        "meuble": meuble,
     }
-    result = predict_one(annonce)
+    try:
+        result = predict_one(annonce)
+    except FileNotFoundError as e:
+        raise _model_unavailable("m2_loyer_classique", e)
     return {"statut": "succes", **result}
 
 
 @router.get("/estival/estimation")
 def estimer_estival(
     ville: str = Query(..., min_length=2, description="Ville balnéaire couverte (ex: Hammamet)"),
+    categorie: str = Query(None, pattern="^(appartement|maison_vacances|villa)$"),
+    nb_chambres: int = Query(None, ge=0, le=20),
+    surface: float = Query(None, gt=0, le=5000),
+    nb_lits: int = Query(None, ge=1, le=40),
+    nb_sdb: int = Query(None, ge=0, le=20),
+    front_de_mer: bool = Query(None),
+    dist_plage_km: float = Query(None, ge=0, le=100),
 ):
     from models.m3_pricing_estival.predict import predict_one, VilleInconnue
     try:
-        result = predict_one(ville)
+        result = predict_one(ville, categorie=categorie, nb_chambres=nb_chambres, surface=surface,
+                             nb_lits=nb_lits, nb_sdb=nb_sdb, front_de_mer=front_de_mer,
+                             dist_plage_km=dist_plage_km)
     except VilleInconnue as e:
         raise HTTPException(status_code=422, detail=str(e))
     except FileNotFoundError as e:

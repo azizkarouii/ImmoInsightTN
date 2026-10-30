@@ -1,4 +1,5 @@
 import re
+import json
 from urllib.parse import unquote
 
 import scrapy
@@ -13,12 +14,18 @@ GOUVERNORATS = [
     "gabes", "medenine", "djerba", "tataouine", "gafsa", "tozeur", "kebili",
 ]
 
-# Pages "all Tunisia" (no pagination possible: JSF-driven, premier écran ~35 annonces)
+# Pages "toute la Tunisie" : (type, slug, nombre de pages). Pagination ":p:N",
+# 32 annonces par page (~4 800 appartements à louer, ~5 000 à vendre).
 SC_CATEGORIES = [
-    ("vente",   "appartements-a-vendre"),
-    ("location", "appartements-a-louer"),
-    ("estival", "appartements-vacational"),
+    ("location", "appartements-a-louer", 25),
+    ("location", "villas-et-maisons-de-luxe-a-louer", 12),
+    ("location", "maisons-a-louer", 6),
+    ("vente",   "appartements-a-vendre", 10),
+    ("vente",   "villas-et-maisons-de-luxe-a-vendre", 5),
+    ("estival", "appartements-vacational", 1),
 ]
+PAGES_PAR_SLUG = {slug: pages for _, slug, pages in SC_CATEGORIES}
+PAGE_RE = re.compile(r":p:(\d+)$")
 
 # Pages par ville — sous-catégories découvertes depuis la homepage
 ST_SLUGS = [
@@ -36,6 +43,33 @@ CITIES = [
 ]
 
 
+def parse_json_ld(scripts):
+    """Prix et caractéristiques depuis le JSON-LD RealEstateListing d'une annonce."""
+    for raw in scripts:
+        try:
+            data = json.loads(raw)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(data, dict) or data.get("@type") != "RealEstateListing":
+            continue
+        offre = data.get("offers") or {}
+        bien = data.get("itemOffered") or {}
+        surface = (bien.get("floorSize") or {}).get("value")
+
+        def entier(value):
+            return int(value) if isinstance(value, (int, float)) and value > 0 else None
+
+        return {
+            "prix": entier(offre.get("price")),
+            "surface": entier(surface),
+            "nb_pieces": entier(bien.get("numberOfRooms")),
+            "nb_chambres": entier(bien.get("numberOfBedrooms")),
+            "nb_sdb": entier(bien.get("numberOfBathroomsTotal")),
+            "ville": (bien.get("address") or {}).get("addressLocality"),
+        }
+    return {}
+
+
 def _type_offre_from_slug(slug: str) -> str:
     if "vacational" in slug:
         return "location_estivale"
@@ -49,7 +83,7 @@ class MubawabSpider(scrapy.Spider):
     allowed_domains = ["mubawab.tn"]
 
     start_urls = (
-        [f"https://www.mubawab.tn/fr/sc/{slug}" for _, slug in SC_CATEGORIES]
+        [f"https://www.mubawab.tn/fr/sc/{slug}" for _, slug, _ in SC_CATEGORIES]
         + [f"https://www.mubawab.tn/fr/st/{city}/{slug}" for city in CITIES for slug in ST_SLUGS]
     )
 
@@ -66,26 +100,46 @@ class MubawabSpider(scrapy.Spider):
         "COOKIES_ENABLED": False,
     }
 
-    def __init__(self, start_urls=None, *args, **kwargs):
+    def __init__(self, start_urls=None, annonces=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.db = get_db()
         if start_urls:
             self.start_urls = list(start_urls)
+        # Mode rafraîchissement : [(url_annonce, type_offre)] visitées directement
+        self.annonces = annonces or []
+
+    async def start(self):
+        if self.annonces:
+            for url, type_offre in self.annonces:
+                yield scrapy.Request(url, callback=self.parse_annonce,
+                                     meta={"type_offre": type_offre, "ville_from_url": None})
+            return
+        for url in self.start_urls:
+            yield scrapy.Request(url, callback=self.parse)
 
     def parse(self, response):
-        annonce_links = response.css("a[href*='/fr/a/'], a[href*='/fr/pa/']::attr(href)").getall()
-        annonce_links = list(set(annonce_links))
+        # ::attr(href) sur chaque sélecteur : sans lui, le premier renvoyait la balise <a>
+        # entière, enregistrée comme URL d'annonce ("/fr/st/tunis/<a href=...")
+        annonce_links = response.css("a[href*='/fr/a/']::attr(href), a[href*='/fr/pa/']::attr(href)").getall()
+        annonce_links = list(dict.fromkeys(annonce_links))
         print(f"[MUBAWAB] Page {response.status} {response.url} -> {len(annonce_links)} annonces")
 
+        url = PAGE_RE.sub("", response.url)
+        match = PAGE_RE.search(response.url)
+        page = int(match.group(1)) if match else 1
+
         ville_from_url = None
-        if "/fr/sc/" in response.url:
-            slug = response.url.split("/fr/sc/")[-1]
-        elif "/fr/st/" in response.url:
-            ville_from_url = response.url.split("/fr/st/")[-1].split("/")[0]
-            slug = response.url.split("/fr/st/")[-1].split("/")[-1]
+        if "/fr/sc/" in url:
+            slug = url.split("/fr/sc/")[-1]
+        elif "/fr/st/" in url:
+            ville_from_url = url.split("/fr/st/")[-1].split("/")[0]
+            slug = url.split("/fr/st/")[-1].split("/")[-1]
         else:
             slug = ""
         type_offre = _type_offre_from_slug(slug)
+
+        if "/fr/sc/" in url and annonce_links and page < PAGES_PAR_SLUG.get(slug, 1):
+            yield response.follow(f"{url}:p:{page + 1}", callback=self.parse)
 
         for link in annonce_links:
             yield response.follow(
@@ -121,58 +175,41 @@ class MubawabSpider(scrapy.Spider):
             "location_estivale": "raw_estival",
         }[type_offre]]
 
-        prix_raw = (
-            response.css("span.priceTag::text").get() or
-            response.css("div.priceTag::text").get() or
-            response.css("[class*='price']::text").get() or
-            ""
-        )
-        if not prix_raw or "consulter" in prix_raw.lower():
-            all_text = " ".join(response.css("*::text").getall())
-            match = re.search(r"(\d{1,3}(?:[\s.,]\d{3})+)\s*(?:TND|DT|دينار|Dinar)", all_text)
-            if not match:
-                match = re.search(r"(\d{4,6})\s*(?:TND|DT|دينار|Dinar)", all_text)
-            if not match:
-                match = re.search(r"(\d{3})\s*(?:TND|DT|دينار|Dinar)", all_text)
-            prix_raw = match.group(0) if match else None
-
-        prix = clean_prix(prix_raw)
-
-        surface_raw = (
-            response.css("[class*='surface']::text").get() or
-            response.css("[class*='size']::text").get() or
-            ""
-        )
-        surface = clean_surface(surface_raw)
-        if not surface:
-            all_text = " ".join(response.css("*::text").getall())
-            match = re.search(r"(\d+)\s*m²", all_text)
-            surface_raw = match.group(0) if match else None
-            surface = clean_surface(surface_raw)
-
         all_text = " ".join(response.css("*::text").getall())
 
-        pieces_match   = re.search(r"(\d+)\s*[Pp]ièces?", all_text)
-        chambres_match = re.search(r"(\d+)\s*[Cc]hambres?", all_text)
-        sdb_match      = re.search(r"(\d+)\s*[Ss]alles?\s*de\s*bains?", all_text)
+        # Source principale : données structurées JSON-LD (RealEstateListing).
+        # Repli : bloc principal ("6 500 TND", "180m²", "4 Pièces"...). Plus de
+        # recherche de prix dans tout le texte : elle captait d'autres nombres
+        # (prix x1000 sur les pages /fr/pa/).
+        ld = parse_json_ld(response.css("script[type='application/ld+json']::text").getall())
+
+        prix = ld.get("prix")
+        if prix is None:
+            prix = clean_prix(response.css(".mainInfoProp h3.orangeTit bdi::text").get())
+
+        details = " | ".join(" ".join(t.split()) for t in response.css(".adDetailFeature ::text").getall() if t.strip())
+
+        surface_match  = re.search(r"(\d+)\s*m²", details)
+        pieces_match   = re.search(r"(\d+)\s*[Pp]ièces?", details)
+        chambres_match = re.search(r"(\d+)\s*[Cc]hambres?", details)
+        sdb_match      = re.search(r"(\d+)\s*[Ss]alles?\s*de\s*bains?", details)
         etage_match    = re.search(r"(\d+)[eèème]+\s*étage", all_text)
 
-        nb_pieces   = clean_int(pieces_match.group(1) if pieces_match else None)
-        nb_chambres = clean_int(chambres_match.group(1) if chambres_match else None)
-        nb_sdb      = clean_int(sdb_match.group(1) if sdb_match else None)
+        surface     = ld.get("surface") or clean_surface(surface_match.group(1) if surface_match else None)
+        nb_pieces   = ld.get("nb_pieces") or clean_int(pieces_match.group(1) if pieces_match else None)
+        nb_chambres = ld.get("nb_chambres") or clean_int(chambres_match.group(1) if chambres_match else None)
+        nb_sdb      = ld.get("nb_sdb") or clean_int(sdb_match.group(1) if sdb_match else None)
         etage       = clean_int(etage_match.group(1) if etage_match else None)
 
-        localisation_raw = (
-            response.css("span[class*='location']::text").get() or
-            response.css("span[class*='city']::text").get() or
-            response.css("div[class*='address']::text").get() or
-            ""
-        ).strip()
-
-        parts = [p.strip() for p in localisation_raw.split(",")]
-        quartier    = parts[0] if len(parts) > 0 else None
-        ville       = parts[1] if len(parts) > 1 else parts[0] if parts else None
-        gouvernorat = parts[2] if len(parts) > 2 else ville
+        # "La Marsa Ville à La Marsa" : quartier à ville
+        localisation_raw = " ".join(" ".join(response.css("h3.greyTit ::text").getall()).split())
+        if " à " in localisation_raw:
+            quartier, ville = [p.strip() for p in localisation_raw.split(" à ", 1)]
+        else:
+            quartier, ville = None, localisation_raw or None
+        gouvernorat = None
+        if not ville and ld.get("ville"):
+            ville = ld["ville"]
 
         # Extract gouvernorat from URL path if not in text
         if not gouvernorat:
@@ -196,6 +233,18 @@ class MubawabSpider(scrapy.Spider):
             type_bien = "local_commercial"
         elif "bureau" in titre_lower:
             type_bien = "bureau"
+
+        # "Type de bien" déclaré dans les caractéristiques prime sur le titre
+        # (un "duplex" est le plus souvent un appartement)
+        features = [" ".join(t.split()) for t in response.css(".adMainFeatureContent ::text").getall() if t.strip()]
+        if "Type de bien" in features[:-1]:
+            declare = features[features.index("Type de bien") + 1].lower()
+            for cle, valeur in [("appartement", "appartement"), ("duplex", "appartement"), ("studio", "appartement"),
+                                ("villa", "villa"), ("maison", "villa"), ("terrain", "terrain"),
+                                ("bureau", "bureau"), ("local", "local_commercial")]:
+                if cle in declare:
+                    type_bien = valeur
+                    break
 
         equipements_keywords = [
             "ascenseur", "parking", "garage", "piscine", "jardin",
@@ -242,7 +291,7 @@ class MubawabSpider(scrapy.Spider):
 
 
 def _build_start_urls(cities=None):
-    urls = [f"https://www.mubawab.tn/fr/sc/{slug}" for _, slug in SC_CATEGORIES]
+    urls = [f"https://www.mubawab.tn/fr/sc/{slug}" for _, slug, _ in SC_CATEGORIES]
     if cities:
         cities = [c.strip() for c in cities if c.strip()]
     else:
@@ -251,17 +300,23 @@ def _build_start_urls(cities=None):
     return urls
 
 
-def _page_urls(urls, max_pages=4):
-    expanded = []
-    for url in urls:
-        expanded.append(url)
-        if "/fr/st/" in url:
-            for page in range(2, max_pages + 1):
-                expanded.append(f"{url}?p={page}")
-    return expanded
-
-
 def run_mubawab(cities=None):
     process = CrawlerProcess()
-    process.crawl(MubawabSpider, start_urls=_page_urls(_build_start_urls(cities), max_pages=5))
+    process.crawl(MubawabSpider, start_urls=_build_start_urls(cities))
+    process.start()
+
+
+def run_mubawab_refresh(limit=None):
+    """Re-visite les annonces Mubawab sans prix (prix sur demande, ou prix
+    aberrant annulé) avec le parseur actuel."""
+    db = get_db()
+    annonces = []
+    for collection, type_offre in [("raw_vente", "vente"), ("raw_location", "location")]:
+        for doc in db[collection].find({"source": "mubawab", "prix": None}, {"url": 1}):
+            if "/fr/a/" in doc["url"] or "/fr/pa/" in doc["url"]:
+                annonces.append((doc["url"], type_offre))
+    annonces = annonces[:limit] if limit else annonces
+    print(f"[MUBAWAB] Rafraichissement de {len(annonces)} annonces sans prix")
+    process = CrawlerProcess()
+    process.crawl(MubawabSpider, annonces=annonces)
     process.start()

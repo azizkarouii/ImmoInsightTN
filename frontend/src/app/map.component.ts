@@ -145,7 +145,7 @@ export class MapComponent implements AfterViewInit, OnDestroy {
 
     this.request = this.http
       .get<{ total: number, data: any[] }>('http://localhost:8000/api/annonces/carte', {
-        params: { collection: this.selectedCollection, limit: 1000 },
+        params: { collection: this.selectedCollection, limit: 5000 },
       })
       .subscribe({
         next: (res) => {

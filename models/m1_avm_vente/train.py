@@ -65,16 +65,17 @@ def train_stacking(X, y, n_splits=5):
     oof_lgb = np.zeros(len(X))
     scores_mae, scores_r2 = [], []
 
-    # Arbres peu profonds et régularisés (une soixantaine d'annonces seulement) ;
-    # prix croissant avec la surface imposé par contrainte de monotonie
+    # Arbres de profondeur modérée (~1 000 annonces depuis Octobre 2026 ; avec
+    # une soixantaine, des arbres plus courts étaient nécessaires) ; prix
+    # croissant avec la surface imposé par contrainte de monotonie
     monotone = [1 if c == "surface" else 0 for c in X.columns]
-    params_xgb = {"n_estimators": 300, "max_depth": 3, "learning_rate": 0.05,
+    params_xgb = {"n_estimators": 600, "max_depth": 5, "learning_rate": 0.04,
                    "subsample": 0.8, "colsample_bytree": 0.8, "min_child_weight": 3,
-                   "reg_lambda": 5, "monotone_constraints": tuple(monotone),
+                   "reg_lambda": 3, "monotone_constraints": tuple(monotone),
                    "random_state": 42, "verbosity": 0}
-    params_lgb = {"n_estimators": 300, "num_leaves": 7, "max_depth": 3, "learning_rate": 0.05,
+    params_lgb = {"n_estimators": 600, "num_leaves": 24, "max_depth": 5, "learning_rate": 0.04,
                    "subsample": 0.8, "subsample_freq": 1, "feature_fraction": 0.8,
-                   "min_child_samples": 5, "reg_lambda": 5, "monotone_constraints": monotone,
+                   "min_child_samples": 10, "reg_lambda": 3, "monotone_constraints": monotone,
                    "random_state": 42, "verbose": -1}
 
     for fold, (tr_idx, va_idx) in enumerate(kf.split(X)):

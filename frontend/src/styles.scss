@@ -1073,3 +1073,85 @@ code {
   .chat-panel { right: 0; bottom: 0; width: 100vw; max-width: 100vw; height: 100vh; border-radius: 0; }
   .chat-fab { right: 16px; bottom: 16px; }
 }
+
+/* ===== Tableaux : recherche et tri ===== */
+.table-toolbar { display: flex; margin-bottom: 12px; }
+.search-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  max-width: 520px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card-bg-strong);
+}
+.search-box:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.15); }
+.search-box input { flex: 1; border: none; outline: none; background: transparent; padding: 9px 0; font: inherit; font-size: 0.85rem; }
+.search-box input::-webkit-search-cancel-button { display: none; }
+.search-box button { border: none; background: none; cursor: pointer; color: var(--text-light); font-size: 0.85rem; }
+
+.th-tri { padding: 0 !important; }
+.th-tri button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 12px 14px;
+  border: none;
+  background: none;
+  font: inherit;
+  font-weight: inherit;
+  color: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.th-tri button:hover { color: var(--primary); }
+.th-tri .tri-icone { font-size: 0.7em; color: var(--text-light); }
+.th-tri.actif .tri-icone { color: var(--accent); }
+.th-tri.actif button { color: var(--primary); }
+
+/* ===== Statistiques : sections, cartes graphiques, tableaux ===== */
+.summary-grid.kpi-8 { grid-template-columns: repeat(4, 1fr); }
+@media (max-width: 900px) { .summary-grid.kpi-8 { grid-template-columns: repeat(2, 1fr); } }
+.summary-tile small { display: block; margin-top: 2px; font-size: 0.7rem; color: var(--text-light); }
+
+.stats-section { margin-top: 28px; }
+.stats-section-head { margin-bottom: 4px; }
+.stats-section-head h3 { margin: 0; font-size: 1.05rem; color: var(--primary); }
+.stats-section-head p { margin: 2px 0 0; font-size: 0.82rem; color: var(--text-secondary); }
+.stats-section .charts-grid { margin-top: 12px; }
+
+.chart-card.chart-large { grid-column: span 2; }
+.chart-card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin-bottom: 10px; }
+.chart-card-head h3 { margin: 0 !important; }
+.chart-aide { margin: 3px 0 0; font-size: 0.74rem; color: var(--text-light); }
+.chart-toggle {
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  background: var(--card-bg-strong);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.chart-toggle:hover { border-color: var(--accent); color: var(--primary); }
+.chart-vide { height: 240px; display: flex; align-items: center; justify-content: center; color: var(--text-light); font-size: 0.85rem; }
+.chart-table { max-height: 260px; overflow: auto; }
+.chart-table table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+.chart-table th, .chart-table td { padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; }
+.chart-table th { position: sticky; top: 0; background: var(--card-bg-strong); color: var(--text-secondary); font-weight: 600; }
+
+@media (max-width: 900px) {
+  .chart-card.chart-large { grid-column: auto; }
+}
+
+/* Tableau en cours de mise à jour (recherche, tri) : estompé mais toujours affiché */
+.table-wrap.en-maj { opacity: 0.55; transition: opacity 0.15s ease; }
+.table-caption .maj { color: var(--accent); }

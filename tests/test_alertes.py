@@ -118,3 +118,53 @@ class TestEndpointsAlertes:
 
     def test_periode_invalide(self, client):
         assert client.get("/api/alertes/nouvelles", params={"jours": 0}).status_code == 422
+
+
+class TestRechercheEtTri:
+    def test_tri_prix_croissant_puis_decroissant(self, client):
+        asc = client.get("/api/alertes/nouvelles", params={"jours": 90, "tri": "prix", "ordre": "asc", "limit": 20}).json()["data"]
+        desc = client.get("/api/alertes/nouvelles", params={"jours": 90, "tri": "prix", "ordre": "desc", "limit": 20}).json()["data"]
+        prix_asc = [d["prix"] for d in asc if d.get("prix")]
+        prix_desc = [d["prix"] for d in desc if d.get("prix")]
+        assert prix_asc == sorted(prix_asc) and prix_desc == sorted(prix_desc, reverse=True)
+        assert prix_asc[0] < prix_desc[0]
+
+    def test_valeurs_manquantes_en_fin_de_liste(self, client):
+        for ordre in ("asc", "desc"):
+            data = client.get("/api/alertes/nouvelles", params={"jours": 90, "tri": "surface", "ordre": ordre, "limit": 200}).json()["data"]
+            surfaces = [d.get("surface") for d in data]
+            premiers_vides = next((i for i, s in enumerate(surfaces) if s is None), len(surfaces))
+            assert all(s is None for s in surfaces[premiers_vides:])
+
+    def test_recherche_tous_les_mots(self, client):
+        j = client.get("/api/alertes/nouvelles", params={"jours": 90, "q": "villa marsa", "limit": 50}).json()
+        assert j["count"] >= 1
+        for d in j["data"]:
+            texte = " ".join(str(d.get(k) or "") for k in ("titre", "ville", "gouvernorat")).lower()
+            assert "villa" in texte or "marsa" in texte
+
+    def test_recherche_sans_resultat_et_caracteres_speciaux(self, client):
+        assert client.get("/api/alertes/nouvelles", params={"jours": 90, "q": "zzzqqq"}).json()["count"] == 0
+        assert client.get("/api/alertes/nouvelles", params={"jours": 90, "q": ".*(["}).status_code == 200
+
+    def test_tri_invalide(self, client):
+        assert client.get("/api/alertes/nouvelles", params={"tri": "titre"}).status_code == 422
+
+
+class TestStatsMarche:
+    def test_structure(self, client):
+        j = client.get("/api/stats/marche").json()
+        for cle in ["kpis", "vente_prix_m2_par_gouvernorat", "vente_histogramme_prix_m2", "location_loyer_par_ville",
+                    "prix_par_chambres", "estival_par_type", "types", "rendement_par_ville", "activite_quotidienne"]:
+            assert cle in j
+        assert len(j["activite_quotidienne"]) == 60
+
+    def test_gouvernorats_officiels_uniquement(self, client):
+        from api.routers.stats import GOUVERNORATS
+        for z in client.get("/api/stats/marche").json()["vente_prix_m2_par_gouvernorat"]:
+            assert z["cle"].lower() in GOUVERNORATS and z["n"] >= 8
+
+    def test_rendement_coherent(self, client):
+        for r in client.get("/api/stats/marche").json()["rendement_par_ville"]:
+            assert r["rendement_brut_pct"] == round(r["loyer_median"] * 12 / r["prix_median"] * 100, 1)
+            assert r["n_vente"] >= 5 and r["n_location"] >= 5

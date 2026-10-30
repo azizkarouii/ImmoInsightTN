@@ -2,7 +2,9 @@ import { API_BASE } from './api.config';
 import { Component, OnInit } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { CommonModule } from '@angular/common';
-import { Subscription } from 'rxjs';
+import { FormsModule } from '@angular/forms';
+import { Subject, Subscription } from 'rxjs';
+import { debounceTime, distinctUntilChanged } from 'rxjs/operators';
 
 type Onglet = 'nouvelles' | 'prix' | 'opportunites' | 'supprimees' | 'fiabilite';
 type Collection = 'clean_vente' | 'clean_location' | 'clean_estival';
@@ -19,7 +21,7 @@ interface Job {
 @Component({
   selector: 'app-alerts',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, FormsModule],
   template: `
     <div class="card">
       <div class="section-head">
@@ -54,31 +56,44 @@ interface Job {
         </button>
       </div>
 
-      <div *ngIf="loading" class="loading"><div class="spinner"></div>Chargement...</div>
+      <!-- Spinner plein écran seulement au premier chargement d'un onglet : pendant une
+           recherche ou un tri, la barre de recherche et le tableau restent affichés (le
+           champ de saisie n'est pas recréé et garde le focus) -->
+      <div *ngIf="loading && !rows.length" class="loading"><div class="spinner"></div>Chargement...</div>
       <div *ngIf="error" class="result-box" style="background:#fbe9e7"><p style="color:#c62828">⚠️ {{ error }}</p></div>
+      <div *ngIf="avertissement" class="notice">{{ avertissement }}</div>
 
-      <ng-container *ngIf="!loading && !error">
-        <p class="table-caption" *ngIf="rows.length">
-          {{ titreTableau() }} — {{ total | number }} au total, triées par {{ ordreTri() }}
+      <ng-container *ngIf="rows.length || !loading">
+        <div class="table-toolbar" *ngIf="onglet === 'nouvelles'">
+          <div class="search-box">
+            <span aria-hidden="true">🔍</span>
+            <input type="search" [ngModel]="recherche" (ngModelChange)="rechercher($event)" maxlength="100"
+                   placeholder="Rechercher par titre, ville, quartier… (ex. « villa la marsa »)" aria-label="Rechercher dans les nouvelles annonces" />
+            <button *ngIf="recherche" type="button" (click)="rechercher('')" aria-label="Effacer la recherche">✕</button>
+          </div>
+        </div>
+
+        <p class="table-caption" *ngIf="rows.length && !error">
+          {{ titreTableau() }} — {{ total | number }} {{ recherche && onglet === 'nouvelles' ? 'résultat(s) pour « ' + recherche + ' »' : 'au total' }},
+          triées par {{ libelleTri() }}<span class="maj" *ngIf="loading"> · mise à jour…</span>
         </p>
 
-        <div class="table-wrap" *ngIf="rows.length">
+        <div class="table-wrap" *ngIf="rows.length && !error" [class.en-maj]="loading">
           <table>
             <thead>
               <tr>
                 <th>Annonce</th>
-                <th>Lieu</th>
-                <ng-container [ngSwitch]="onglet">
-                  <ng-container *ngSwitchCase="'prix'"><th>Ancien prix</th><th>Nouveau prix</th><th>Variation</th><th>Changé le</th></ng-container>
-                  <ng-container *ngSwitchCase="'opportunites'"><th>Prix affiché</th><th>Estimation</th><th>Écart</th></ng-container>
-                  <ng-container *ngSwitchCase="'supprimees'"><th>Dernier prix</th><th>Retirée le</th></ng-container>
-                  <ng-container *ngSwitchCase="'fiabilite'"><th>Prix</th><th>Fiabilité</th></ng-container>
-                  <ng-container *ngSwitchDefault><th>Surface</th><th>Prix</th><th>Vs estimation</th><th>Publiée</th></ng-container>
-                </ng-container>
+                <th *ngFor="let c of colonnes[onglet]" class="th-tri" [class.actif]="tri.cle === c.cle"
+                    [attr.aria-sort]="tri.cle === c.cle ? (tri.ordre === 'asc' ? 'ascending' : 'descending') : 'none'">
+                  <button type="button" (click)="trier(c.cle)" [title]="'Trier par ' + c.libelle.toLowerCase()">
+                    {{ c.libelle }}
+                    <span class="tri-icone" aria-hidden="true">{{ tri.cle === c.cle ? (tri.ordre === 'asc' ? '▲' : '▼') : '↕' }}</span>
+                  </button>
+                </th>
               </tr>
             </thead>
             <tbody>
-              <tr *ngFor="let r of rows.slice(0, affichees)">
+              <tr *ngFor="let r of lignes.slice(0, affichees)">
                 <td class="cell-title">
                   <a *ngIf="r.url; else sansLien" [href]="r.url" target="_blank" rel="noopener">{{ r.titre || 'Sans titre' }}</a>
                   <ng-template #sansLien>{{ r.titre || 'Sans titre' }}</ng-template>
@@ -128,9 +143,15 @@ interface Job {
           <button class="btn" (click)="affichees = affichees + pas">Afficher {{ pas }} de plus ({{ rows.length - affichees }} restantes)</button>
         </div>
 
-        <div *ngIf="!rows.length" class="empty-state">
-          <strong>Aucune alerte « {{ titreTableau().toLowerCase() }} » sur la période.</strong>
-          <span>{{ aideVide() }}</span>
+        <div *ngIf="!rows.length && !loading && !error" class="empty-state">
+          <ng-container *ngIf="recherche && onglet === 'nouvelles'; else videPeriode">
+            <strong>Aucune annonce ne correspond à « {{ recherche }} ».</strong>
+            <span>Essayez un autre mot (ville, quartier, type de bien) ou élargissez la période.</span>
+          </ng-container>
+          <ng-template #videPeriode>
+            <strong>Aucune alerte « {{ titreTableau().toLowerCase() }} » sur la période.</strong>
+            <span>{{ aideVide() }}</span>
+          </ng-template>
         </div>
       </ng-container>
     </div>
@@ -201,8 +222,39 @@ export class AlertsComponent implements OnInit {
   jours = 7;
   loading = false;
   error: string | null = null;
+  avertissement: string | null = null;
   rows: any[] = [];
+  lignes: any[] = [];   // rows triées (calculées une fois, pas dans un getter)
   total = 0;
+  recherche = '';
+  private recherche$ = new Subject<string>();
+
+  // Colonnes triables par onglet. Nouvelles annonces : tri côté serveur (sur toute la
+  // base, pas seulement les lignes chargées) ; autres onglets : tri des lignes affichées.
+  colonnes: Record<Onglet, { cle: string; libelle: string }[]> = {
+    nouvelles: [
+      { cle: 'lieu', libelle: 'Lieu' }, { cle: 'surface', libelle: 'Surface' }, { cle: 'prix', libelle: 'Prix' },
+      { cle: 'estimation', libelle: 'Vs estimation' }, { cle: 'publiee', libelle: 'Publiée' },
+    ],
+    prix: [
+      { cle: 'lieu', libelle: 'Lieu' }, { cle: 'ancien_prix', libelle: 'Ancien prix' }, { cle: 'nouveau_prix', libelle: 'Nouveau prix' },
+      { cle: 'variation_pct', libelle: 'Variation' }, { cle: 'date_changement', libelle: 'Changé le' },
+    ],
+    opportunites: [
+      { cle: 'lieu', libelle: 'Lieu' }, { cle: 'prix', libelle: 'Prix affiché' }, { cle: 'prix_estime', libelle: 'Estimation' },
+      { cle: 'ecart_estimation_pct', libelle: 'Écart' },
+    ],
+    supprimees: [{ cle: 'lieu', libelle: 'Lieu' }, { cle: 'prix', libelle: 'Dernier prix' }, { cle: 'supprime_le', libelle: 'Retirée le' }],
+    fiabilite: [{ cle: 'lieu', libelle: 'Lieu' }, { cle: 'prix', libelle: 'Prix' }, { cle: 'fiabilite', libelle: 'Fiabilité' }],
+  };
+  private trisParDefaut: Record<Onglet, { cle: string; ordre: 'asc' | 'desc' }> = {
+    nouvelles: { cle: 'publiee', ordre: 'desc' },
+    prix: { cle: 'variation_pct', ordre: 'asc' },
+    opportunites: { cle: 'ecart_estimation_pct', ordre: 'asc' },
+    supprimees: { cle: 'supprime_le', ordre: 'desc' },
+    fiabilite: { cle: 'fiabilite', ordre: 'asc' },
+  };
+  tri = { ...this.trisParDefaut.nouvelles };
   pas = 20;
   affichees = 20;
   resume: any = null;
@@ -212,6 +264,8 @@ export class AlertsComponent implements OnInit {
   constructor(private http: HttpClient) {}
 
   ngOnInit(): void {
+    // Recherche déclenchée 300 ms après la dernière frappe
+    this.recherche$.pipe(debounceTime(300), distinctUntilChanged()).subscribe(() => this.chargerTableau(true));
     this.charger();
     this.http.get<{ jobs: Job[] }>(API_BASE + '/api/alertes/scheduler')
       .subscribe({ next: res => this.jobs = res.jobs || [], error: () => this.jobs = [] });
@@ -220,8 +274,52 @@ export class AlertsComponent implements OnInit {
   setOnglet(onglet: Onglet): void {
     if (onglet === 'opportunites' && this.collection === 'clean_estival') return;
     this.onglet = onglet;
+    this.tri = { ...this.trisParDefaut[onglet] };
     if (onglet === 'fiabilite') this.collection = 'clean_vente';
     this.chargerTableau();
+  }
+
+  /** 1er clic : croissant ; clic suivant sur la même colonne : décroissant (et inversement). */
+  trier(cle: string): void {
+    this.tri = this.tri.cle === cle
+      ? { cle, ordre: this.tri.ordre === 'asc' ? 'desc' : 'asc' }
+      : { cle, ordre: 'asc' };
+    if (this.onglet === 'nouvelles') {
+      this.chargerTableau(true);      // tri sur toute la base, côté serveur
+    } else {
+      this.affichees = this.pas;
+      this.lignes = this.trierLocalement(this.rows);
+    }
+  }
+
+  rechercher(texte: string): void {
+    this.recherche = texte;
+    this.recherche$.next(texte.trim());
+  }
+
+  libelleTri(): string {
+    const col = this.colonnes[this.onglet].find(c => c.cle === this.tri.cle);
+    const nom = ({ publiee: 'date de publication', estimation: 'écart à l\'estimation', supprime_le: 'date de retrait',
+                   date_changement: 'date de changement' } as Record<string, string>)[this.tri.cle] ?? (col?.libelle ?? '').toLowerCase();
+    return `${nom} (${this.tri.ordre === 'asc' ? 'croissant' : 'décroissant'})`;
+  }
+
+  private valeurTri(r: any, cle: string): string | number | null {
+    if (cle === 'lieu') return this.lieu(r) === '—' ? null : this.lieu(r);
+    const v = r?.[cle];
+    return v === undefined || v === '' ? null : v;
+  }
+
+  private trierLocalement(rows: any[]): any[] {
+    const { cle, ordre } = this.tri;
+    const sens = ordre === 'asc' ? 1 : -1;
+    return [...rows].sort((a, b) => {
+      const va = this.valeurTri(a, cle), vb = this.valeurTri(b, cle);
+      // Valeurs manquantes toujours en fin de liste
+      if (va === null || vb === null) return va === null ? (vb === null ? 0 : 1) : -1;
+      if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * sens;
+      return String(va).localeCompare(String(vb), 'fr', { sensitivity: 'base', numeric: true }) * sens;
+    });
   }
 
   setCollection(collection: Collection): void {
@@ -253,11 +351,17 @@ export class AlertsComponent implements OnInit {
     this.chargerTableau();
   }
 
-  private chargerTableau(): void {
+  /** conserver : garder les lignes affichées pendant le chargement (recherche, tri)
+   *  au lieu de vider l'écran (changement d'onglet, de collection ou de période). */
+  private chargerTableau(conserver = false): void {
     this.request?.unsubscribe();
     this.affichees = this.pas;
     this.loading = true;
     this.error = null;
+    if (!conserver) {
+      this.rows = [];
+      this.lignes = [];
+    }
     const urls: Record<Onglet, string> = {
       nouvelles: '/api/alertes/nouvelles',
       prix: '/api/alertes/prix',
@@ -268,15 +372,26 @@ export class AlertsComponent implements OnInit {
     const params: Record<string, string | number> = { limit: 100 };
     if (this.onglet !== 'fiabilite') params['collection'] = this.collection;
     if (['nouvelles', 'prix', 'supprimees'].includes(this.onglet)) params['jours'] = this.jours;
+    if (this.onglet === 'nouvelles') {
+      params['tri'] = this.tri.cle;
+      params['ordre'] = this.tri.ordre;
+      if (this.recherche.trim()) params['q'] = this.recherche.trim();
+    }
 
     this.request = this.http.get<any>(API_BASE + urls[this.onglet], { params }).subscribe({
       next: res => {
         this.rows = Array.isArray(res?.data) ? res.data : [];
+        this.lignes = this.onglet === 'nouvelles' ? this.rows : this.trierLocalement(this.rows);
         this.total = Number(res?.count ?? res?.total ?? this.rows.length);
+        // Une API lancée avant l'ajout de la recherche ignore q/tri sans erreur
+        this.avertissement = this.onglet === 'nouvelles' && res && res.tri === undefined
+          ? "L'API ne gère pas encore la recherche et le tri : redémarrez le serveur FastAPI (port 8000)."
+          : null;
         this.loading = false;
       },
       error: err => {
         this.rows = [];
+        this.lignes = [];
         this.loading = false;
         this.error = err?.status ? `Erreur serveur (${err.status})` : 'Erreur de connexion au serveur';
       },
@@ -286,13 +401,6 @@ export class AlertsComponent implements OnInit {
   detailVariations(): string {
     const c = this.resume?.collections?.[this.collection];
     return `${c?.baisses_prix ?? 0} baisse(s) · ${c?.hausses_prix ?? 0} hausse(s)`;
-  }
-
-  ordreTri(): string {
-    return ({
-      nouvelles: 'date de publication', prix: "variation (baisses d'abord)", opportunites: "écart à l'estimation",
-      supprimees: 'date de retrait', fiabilite: 'score de fiabilité',
-    } as Record<Onglet, string>)[this.onglet];
   }
 
   titreTableau(): string {

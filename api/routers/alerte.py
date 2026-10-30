@@ -3,6 +3,7 @@ from pymongo import MongoClient
 from dotenv import load_dotenv
 from datetime import datetime, timedelta, timezone
 import os
+import re
 from .. import clean_doc
 from .annonces import fix_url
 
@@ -40,10 +41,38 @@ def variation_prix(history, depuis):
     return None
 
 
-def _nouvelles(collection, jours, limit=50):
-    query = {"first_seen": {"$gte": cutoff_iso(jours)}}
+# Colonnes triables du tableau des nouvelles annonces -> champs Mongo
+TRIS_NOUVELLES = {
+    "publiee": ["first_seen"],
+    "lieu": ["ville", "gouvernorat"],
+    "surface": ["surface"],
+    "prix": ["prix"],
+    "estimation": ["ecart_estimation_pct"],
+}
+
+
+def _recherche(q):
+    """Recherche plein texte simple (titre, nom, ville, gouvernorat, quartier) ; chaque mot doit apparaître."""
+    mots = [m for m in re.split(r"\s+", (q or "").strip()) if m][:6]
+    champs = ["titre", "nom", "ville", "gouvernorat", "quartier"]
+    return [{"$or": [{c: {"$regex": re.escape(m), "$options": "i"}} for c in champs]} for m in mots]
+
+
+def _nouvelles(collection, jours, limit=50, q=None, tri="publiee", ordre="desc"):
+    conditions = [{"first_seen": {"$gte": cutoff_iso(jours)}}, *_recherche(q)]
+    query = {"$and": conditions}
     total = db[collection].count_documents(query)
-    docs = list(db[collection].find(query, CHAMPS).sort("first_seen", -1).limit(limit))
+    champs = TRIS_NOUVELLES.get(tri, TRIS_NOUVELLES["publiee"])
+    sens = 1 if ordre == "asc" else -1
+    # Valeurs manquantes toujours en fin de liste, quel que soit le sens du tri
+    pipeline = [
+        {"$match": query},
+        {"$addFields": {"_vide": {"$cond": [{"$in": [{"$ifNull": [f"${champs[0]}", ""]}, ["", None]]}, 1, 0]}}},
+        {"$sort": {"_vide": 1, **{c: sens for c in champs}, "_id": 1}},
+        {"$limit": limit},
+        {"$project": CHAMPS},  # projection par inclusion : _vide est retiré
+    ]
+    docs = list(db[collection].aggregate(pipeline, collation={"locale": "fr", "strength": 1}))
     return total, docs
 
 
@@ -101,9 +130,13 @@ def alertes_nouvelles(
     collection: str = Query("clean_vente", pattern=COLLECTIONS),
     jours: int = Query(3, ge=1, le=90),
     limit: int = Query(50, ge=1, le=200),
+    q: str = Query(None, max_length=100, description="Mots recherchés dans le titre ou le lieu"),
+    tri: str = Query("publiee", pattern="^(publiee|lieu|surface|prix|estimation)$"),
+    ordre: str = Query("desc", pattern="^(asc|desc)$"),
 ):
-    total, docs = _nouvelles(collection, jours, limit)
-    return clean_doc({"collection": collection, "jours": jours, "count": total, "data": _urls(docs)})
+    total, docs = _nouvelles(collection, jours, limit, q, tri, ordre)
+    return clean_doc({"collection": collection, "jours": jours, "q": q, "tri": tri, "ordre": ordre,
+                      "count": total, "data": _urls(docs)})
 
 
 @router.get("/prix")

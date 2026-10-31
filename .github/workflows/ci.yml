@@ -22,10 +22,10 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
-          cache-dependency-path: requirements.txt
+          cache-dependency-path: requirements.lock
 
-      - name: Dépendances
-        run: pip install -r requirements.txt
+      - name: Dépendances (versions verrouillées, wheels uniquement)
+        run: pip install --only-binary :all: -r requirements.lock
 
       - name: L'API démarre sans base, sans modèles et sans clé
         run: python -c "import api.main; print('api.main importé')"
@@ -53,9 +53,9 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - run: npm ci --no-audit --no-fund
+      - run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Build de production
-        run: npx ng build --configuration production
+        run: npm run build -- --configuration production
 
   docker:
     name: Images Docker

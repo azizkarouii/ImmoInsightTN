@@ -167,7 +167,7 @@ export class StatsComponent implements OnInit, AfterViewInit, OnDestroy {
   collections: any[] = [];
   kpis: { libelle: string; valeur: string; aide?: string }[] = [];
 
-  sections = [
+  readonly sections = [
     { id: 'regions', titre: 'Par région', description: 'Chaque annonce est rattachée à sa région (Grand Tunis, Cap Bon, Sahel…) à partir de sa ville ou de son gouvernorat. Médianes affichées à partir de 8 annonces.' },
     { id: 'vente', titre: 'Vente', description: 'Niveau des prix à l\'achat selon la localisation.' },
     { id: 'location', titre: 'Location à l\'année', description: 'Loyers mensuels observés dans les annonces.' },
@@ -177,7 +177,7 @@ export class StatsComponent implements OnInit, AfterViewInit, OnDestroy {
     { id: 'activite', titre: 'Activité et données', description: 'Rythme de collecte, composition des annonces et variations de prix.' },
   ];
 
-  graphiques: Graphique[] = [
+  readonly graphiques: Graphique[] = [
     this.g('regionVolumes', 'regions', 'Annonces par région', 'Nombre d\'annonces par segment', true),
     this.g('regionM2', 'regions', 'Prix médian au m² par région', 'Vente, TND/m²'),
     this.g('regionLoyer', 'regions', 'Loyer médian par région', 'Location à l\'année, TND/mois'),
@@ -199,13 +199,13 @@ export class StatsComponent implements OnInit, AfterViewInit, OnDestroy {
     this.g('variations', 'activite', 'Variations de prix récentes', 'Plus fortes variations sur 90 jours (%)', true),
   ];
 
-  private charts = new Map<string, Chart>();
+  private readonly charts = new Map<string, Chart>();
 
   qualite: any = null;
   qualiteColonnes: { libelle: string; couleur: string; brutes: number; propres: number; part: number }[] = [];
   qualiteLignes: { libelle: string; aide?: string; valeurs: (number | null)[] }[] = [];
 
-  constructor(private http: HttpClient) {}
+  constructor(private readonly http: HttpClient) {}
 
   private g(id: string, section: string, titre: string, aide = '', large = false): Graphique {
     return { id, section, titre, aide, large, config: null, tableau: null, voirTableau: false };
@@ -247,7 +247,7 @@ export class StatsComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   allerA(id: string): void {
-    document.getElementById('stats-' + id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    document.getElementById('stats-' + id)?.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
   }
 
   private construireQualite(rapport: any): void {
@@ -277,7 +277,7 @@ export class StatsComponent implements OnInit, AfterViewInit, OnDestroy {
     ];
     this.qualiteLignes = controles
       .map(([cle, libelle, aide]) => ({ libelle, aide, valeurs: segments.map(seg => cols[`clean_${seg}`][cle] ?? null) }))
-      .filter(l => l.valeurs.some(v => v));
+      .filter(l => l.valeurs.some(Boolean));
   }
 
   labelForCollection(name: string): string {
@@ -636,7 +636,7 @@ export class StatsComponent implements OnInit, AfterViewInit, OnDestroy {
       this.charts.get(id)?.destroy();
       // Hauteur fixée par .chart-box : sans maintainAspectRatio=false, le canvas
       // responsive et son conteneur se redimensionnent mutuellement en boucle
-      const config = { ...g.config, options: { ...(g.config.options || {}), responsive: true, maintainAspectRatio: false } } as ChartConfiguration;
+      const config = { ...g.config, options: { ...g.config.options, responsive: true, maintainAspectRatio: false } } as ChartConfiguration;
       this.charts.set(id, new Chart(canvas, config));
     });
   }

@@ -65,7 +65,7 @@ Sans base existante, lancer une première collecte puis le traitement (ou attend
 
 `.github/workflows/ci.yml`, à chaque push et pull request :
 
-1. **Backend** : installation de `requirements.txt`, import de l'API (démarre sans base, sans modèles ni clé), puis
+1. **Backend** : installation de `requirements.lock` (versions verrouillées), import de l'API (démarre sans base, sans modèles ni clé), puis
    `pytest`. Sans MongoDB, les tests d'intégration sont ignorés automatiquement ; les tests unitaires (qualité des
    données, middleware, outils de l'assistant…) tournent.
 2. **Frontend** : `npm ci` puis build Angular de production (erreurs de template et budgets de taille).

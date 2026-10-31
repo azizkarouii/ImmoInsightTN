@@ -100,7 +100,7 @@ export class ChatWidgetComponent implements OnInit {
   messages: MessageChat[] = [];
   suggestions = SUGGESTIONS_PAR_DEFAUT;
 
-  constructor(private http: HttpClient) {}
+  constructor(private readonly http: HttpClient) {}
 
   ngOnInit(): void {
     try {
@@ -181,7 +181,7 @@ export class ChatWidgetComponent implements OnInit {
       .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
       .replace(/(^|[^*])\*(?!\s)(.+?)\*(?!\*)/g, '$1<em>$2</em>');
 
-    const lignes = texte.replace(/\r/g, '').split('\n');
+    const lignes = texte.replaceAll('\r', '').split('\n');
     const html: string[] = [];
     let i = 0;
     while (i < lignes.length) {

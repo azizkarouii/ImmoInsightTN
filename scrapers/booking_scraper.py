@@ -1,6 +1,6 @@
 import re
 import asyncio
-import random
+import secrets
 from datetime import datetime, timedelta
 from urllib.parse import urljoin
 from .utils import get_db, clean_prix, upsert_annonce
@@ -32,6 +32,10 @@ PENSIONS = [
     ("demi-pension", "demi_pension"),
     ("petit-déjeuner compris", "petit_dejeuner"),
 ]
+
+
+# Délais aléatoires entre les pages (rythme de navigation humain)
+_ALEA = secrets.SystemRandom()
 
 
 def _nombre(texte):
@@ -84,18 +88,21 @@ def parse_booking_card(textes):
 
     # "Appartement entier • 1 chambre • 1 salon • 1 salle de bains • 85 m²"
     config = next((l for l in lignes if "•" in l), "")
-    type_logement = config.split("•")[0].strip() if config else (lignes[0] if lignes else None)
-    surface = re.search(r"(\d[\d.\s]*)\s*m²", config)
+    if config:
+        type_logement = config.split("•")[0].strip()
+    else:
+        type_logement = lignes[0] if lignes else None
+    surface = re.search(r"(?<!\d)(\d+(?:[.\s]\d+)*)\s*m²", config)
 
     # "5 lits (2 lits simples, ...)" ou "1 grand lit double"
     ligne_lits = next((l for l in lignes if "•" not in l and re.search(r"\blits?\b", l, re.IGNORECASE)), "")
     nb_lits = _compte(r"^(\d+)\s", ligne_lits) if ligne_lits else None
 
     score_txt = textes.get("review-score") or ""
-    score = re.search(r"(\d+,\d)", score_txt)
-    nb_avis = re.search(r"(\d[\d\s .]*)\s*(?:expériences vécues|commentaires|avis)", score_txt)
+    score = re.search(r"(?<!\d)(\d+,\d)", score_txt)
+    nb_avis = re.search(r"(?<!\d)(\d+(?:[\s.]\d+)*)\s*(?:expériences vécues|commentaires|avis)", score_txt)
 
-    centre = re.search(r"([\d,]+)\s*(km|m)\s+du centre", card)
+    centre = re.search(r"(?<![\d,])([\d,]+)\s*(km|m)\s+du centre", card)
     plage = re.search(r"À\s*([\d,]+)\s*(km|m)\s+de la plage", card)
 
     def km(match):
@@ -107,7 +114,7 @@ def parse_booking_card(textes):
     pension = next((code for libelle, code in PENSIONS if libelle in unite.lower()), None)
     # Adresse affichée sur la carte ("Yasmine Hammamet", "Houmt Souk") : plus précise que
     # la ville recherchée, utilisée par le géocodeur
-    adresse = re.sub(r"\s*Indiquer sur la carte\s*$", "", (textes.get("address") or "").strip()) or None
+    adresse = (textes.get("address") or "").strip().removesuffix("Indiquer sur la carte").rstrip() or None
     front_de_mer = "front de mer" in card.lower()
 
     return {
@@ -185,7 +192,7 @@ async def scrape_booking(villes=None):
                             f"&offset={page_num * CARTES_PAR_PAGE}"
                         )
                         await page.goto(url, wait_until="domcontentloaded", timeout=45000)
-                        await page.wait_for_timeout(random.randint(3000, 5000))
+                        await page.wait_for_timeout(_ALEA.randint(3000, 5000))
 
                         # "Hammamet : 13 établissements trouvés" : au-delà, Booking
                         # complète la page avec des suggestions hors filtre
@@ -224,7 +231,7 @@ async def scrape_booking(villes=None):
 
                         if total is not None and (page_num + 1) * CARTES_PAR_PAGE >= total:
                             break
-                        await asyncio.sleep(random.randint(2, 5))
+                        await asyncio.sleep(_ALEA.randint(2, 5))
 
                 except Exception as e:
                     print(f"[BOOKING] Erreur pour {ville}/{categorie}: {e}")

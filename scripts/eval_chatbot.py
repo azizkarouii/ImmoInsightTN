@@ -29,7 +29,7 @@ def _valeur(outil, args, cle):
 
 def normaliser(texte):
     """'1 350', '1 350', '1.350' -> '1350' ; '5,21' -> '5.21'."""
-    texte = re.sub(r"(?<=\d)[\s  .](?=\d{3}\b)", "", texte)
+    texte = re.sub(r"(?<=\d)[\s.](?=\d{3}\b)", "", texte)
     return re.sub(r"(?<=\d),(?=\d)", ".", texte)
 
 
@@ -73,7 +73,7 @@ def evaluer(cas, resultat):
     if cas.get("refus"):
         if utilises:
             echecs.append(f"outils appelés pour une question hors sujet : {utilises}")
-        if re.search(r"\d[\d\s]*\s*(TND|DT|€)", texte):
+        if re.search(r"(?<!\d)\d+(?:\s\d+)*\s*(?:TND|DT|€)", texte):
             echecs.append("chiffres de prix dans un refus")
     if cas.get("outils") and not (utilises & cas["outils"]):
         if not (cas.get("accepte_sans_outil_si") and cas["accepte_sans_outil_si"] in texte.lower()):

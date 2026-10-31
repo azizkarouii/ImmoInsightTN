@@ -10,18 +10,23 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 # libgomp1 : requis par LightGBM / XGBoost
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libgomp1 tzdata curl \
+    && apt-get install -y --no-install-recommends curl libgomp1 tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install -r requirements.txt \
+# Versions verrouillées, wheels uniquement : aucun script setup.py exécuté à l'installation
+COPY requirements.lock .
+RUN pip install --only-binary :all: -r requirements.lock \
     # Chromium pour le scraper Booking (Playwright)
     && python -m playwright install --with-deps chromium \
     && rm -rf /var/lib/apt/lists/*
 
-COPY . .
+# Uniquement le code exécuté (modèles entraînés et data/ sont montés en volume)
+COPY api ./api
+COPY etl ./etl
+COPY models ./models
+COPY scrapers ./scrapers
 
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \

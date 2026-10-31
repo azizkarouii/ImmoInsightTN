@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 from datetime import datetime, timedelta, timezone
 from statistics import mean, median
 from collections import Counter
+import math
 import os
 from .. import clean_doc
 from etl.regions import ORDRE_REGIONS, region_de
@@ -182,7 +183,7 @@ def _gouvernorat(d):
 
 
 def _num(v):
-    return float(v) if isinstance(v, (int, float)) and v == v and v > 0 else None
+    return float(v) if isinstance(v, (int, float)) and not math.isnan(v) and v > 0 else None
 
 
 def _med(values):
@@ -203,7 +204,7 @@ def _par_groupe(docs, cle, valeur, min_n=MIN_ZONE, limite=None, tri_par="n"):
 
 def _chambres(d):
     n = d.get("nb_chambres")
-    if not isinstance(n, (int, float)) or n != n or n < 0 or n > 10:
+    if not isinstance(n, (int, float)) or math.isnan(n) or n < 0 or n > 10:
         return None
     return "S+5 et +" if n >= 5 else f"S+{int(n)}"
 

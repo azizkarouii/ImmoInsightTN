@@ -343,7 +343,7 @@ export class EstimationComponent implements OnInit {
   rendements: any[] = [];
   rendementMedian: number | null = null;
 
-  constructor(private http: HttpClient) {}
+  constructor(private readonly http: HttpClient) {}
 
   ngOnInit(): void {
     this.restaurer();

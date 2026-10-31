@@ -18,7 +18,7 @@ CHAMBRES_MAX = 10
 M2_MIN_PAR_CHAMBRE = 9
 
 # "S+2", "S + 3", "s2", "S+1 bis" -> nombre de chambres (convention tunisienne)
-_S_PLUS = re.compile(r"(?<![a-z0-9])s\s*\+?\s*(\d)(?![0-9])", re.IGNORECASE)
+_S_PLUS = re.compile(r"(?<![a-z\d])s(?:\s*\+)?\s*(\d)(?!\d)", re.IGNORECASE)
 
 _rapport = {}
 

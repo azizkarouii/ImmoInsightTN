@@ -24,7 +24,7 @@ def main():
         sys.exit(0)
 
     cmd = args[0].lower()
-    flags = set(a.lower() for a in args[1:])
+    flags = {a.lower() for a in args[1:]}
 
     if cmd == "mubawab":
         cities = [a for a in args[1:] if not a.startswith("--")]

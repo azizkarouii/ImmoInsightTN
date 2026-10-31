@@ -124,7 +124,7 @@ export class MapComponent implements AfterViewInit, OnDestroy {
   private items: any[] = [];
   private request: Subscription | null = null;
 
-  constructor(private http: HttpClient) {}
+  constructor(private readonly http: HttpClient) {}
 
   get heatLabel(): string {
     return ({ clean_estival: 'Prix/nuit', clean_location: 'Loyer/m²' } as Record<string, string>)[this.selectedCollection] || 'Prix/m²';

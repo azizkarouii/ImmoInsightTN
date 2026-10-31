@@ -262,7 +262,7 @@ export class AlertsComponent implements OnInit {
   jobs: Job[] = [];
   private request: Subscription | null = null;
 
-  constructor(private http: HttpClient) {}
+  constructor(private readonly http: HttpClient) {}
 
   ngOnInit(): void {
     // Recherche déclenchée 300 ms après la dernière frappe
@@ -317,7 +317,9 @@ export class AlertsComponent implements OnInit {
     return [...rows].sort((a, b) => {
       const va = this.valeurTri(a, cle), vb = this.valeurTri(b, cle);
       // Valeurs manquantes toujours en fin de liste
-      if (va === null || vb === null) return va === null ? (vb === null ? 0 : 1) : -1;
+      if (va === null && vb === null) return 0;
+      if (va === null) return 1;
+      if (vb === null) return -1;
       if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * sens;
       return String(va).localeCompare(String(vb), 'fr', { sensitivity: 'base', numeric: true }) * sens;
     });
@@ -430,14 +432,14 @@ export class AlertsComponent implements OnInit {
   dateCourte(val: string | null | undefined, heure = true): string {
     if (!val) return '—';
     // Les dates du backend sont en UTC sans fuseau explicite
-    const d = new Date(/[zZ]|[+-]\d\d:\d\d$/.test(val) ? val : val + 'Z');
+    const d = new Date(/(?:[zZ]|[+-]\d\d:\d\d)$/.test(val) ? val : val + 'Z');
     if (Number.isNaN(d.getTime())) return String(val).slice(0, 16);
     return new Intl.DateTimeFormat('fr-FR', heure ? { dateStyle: 'medium', timeStyle: 'short' } : { dateStyle: 'medium' }).format(d);
   }
 
   private ecartHeures(val: string | null | undefined): number | null {
     if (!val) return null;
-    const d = new Date(/[zZ]|[+-]\d\d:\d\d$/.test(val) ? val : val + 'Z');
+    const d = new Date(/(?:[zZ]|[+-]\d\d:\d\d)$/.test(val) ? val : val + 'Z');
     return Number.isNaN(d.getTime()) ? null : (d.getTime() - Date.now()) / 3_600_000;
   }
 
@@ -467,15 +469,15 @@ export class AlertsComponent implements OnInit {
   }
 
   derniereCollecte(): string {
-    const debuts = this.jobs.map(j => j.derniere_execution?.debut).filter((d): d is string => !!d).sort();
-    return debuts.length ? this.depuis(debuts[debuts.length - 1]) : 'aucune';
+    const debuts = this.jobs.map(j => j.derniere_execution?.debut).filter((d): d is string => !!d).sort((a, b) => a.localeCompare(b));
+    return debuts.length ? this.depuis(debuts.at(-1)) : 'aucune';
   }
 
   schedulerInactif(): boolean {
-    const debuts = this.jobs.map(j => j.derniere_execution?.debut).filter((d): d is string => !!d).sort();
+    const debuts = this.jobs.map(j => j.derniere_execution?.debut).filter((d): d is string => !!d).sort((a, b) => a.localeCompare(b));
     if (!this.jobs.length) return false;
     if (!debuts.length) return true;
-    const h = this.ecartHeures(debuts[debuts.length - 1]);
+    const h = this.ecartHeures(debuts.at(-1));
     return h !== null && -h > 26;
   }
 }

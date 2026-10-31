@@ -68,7 +68,7 @@ def _nouvelles(collection, jours, limit=50, q=None, tri="publiee", ordre="desc")
     pipeline = [
         {"$match": query},
         {"$addFields": {"_vide": {"$cond": [{"$in": [{"$ifNull": [f"${champs[0]}", ""]}, ["", None]]}, 1, 0]}}},
-        {"$sort": {"_vide": 1, **{c: sens for c in champs}, "_id": 1}},
+        {"$sort": {"_vide": 1, **dict.fromkeys(champs, sens), "_id": 1}},
         {"$limit": limit},
         {"$project": CHAMPS},  # projection par inclusion : _vide est retiré
     ]

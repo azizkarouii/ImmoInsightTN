@@ -57,7 +57,7 @@ import { IconComponent } from './icon.component';
   styles: []
 })
 export class AppComponent implements OnInit {
-  tabs = [
+  readonly tabs = [
     { id: 'carte', icon: 'map', label: 'Carte' },
     { id: 'stats', icon: 'chart', label: 'Statistiques' },
     { id: 'estimation', icon: 'calculator', label: 'Estimation' },
@@ -70,7 +70,7 @@ export class AppComponent implements OnInit {
   prochaineCollecte: string | null = null;
   collecteRecente = false;
 
-  constructor(private http: HttpClient) {}
+  constructor(private readonly http: HttpClient) {}
 
   /** Onglet courant dans l'URL (#stats…) : rechargement, favoris et bouton Précédent conservent la section. */
   ouvrir(id: string): void {
@@ -114,7 +114,7 @@ export class AppComponent implements OnInit {
   }
 
   private majCollecte(jobs: any[]): void {
-    const toDate = (v: string) => new Date(/[zZ]|[+-]\d\d:\d\d$/.test(v) ? v : v + 'Z');
+    const toDate = (v: string) => new Date(/(?:[zZ]|[+-]\d\d:\d\d)$/.test(v) ? v : v + 'Z');
     const fmt = new Intl.DateTimeFormat('fr-FR', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 
     const dernieres = jobs.map(j => j.derniere_execution?.debut).filter(Boolean).map(toDate)

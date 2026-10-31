@@ -197,11 +197,11 @@ class MubawabSpider(scrapy.Spider):
 
         details = " | ".join(" ".join(t.split()) for t in response.css(".adDetailFeature ::text").getall() if t.strip())
 
-        surface_match  = re.search(r"(\d+)\s*m²", details)
-        pieces_match   = re.search(r"(\d+)\s*[Pp]ièces?", details)
-        chambres_match = re.search(r"(\d+)\s*[Cc]hambres?", details)
-        sdb_match      = re.search(r"(\d+)\s*[Ss]alles?\s*de\s*bains?", details)
-        etage_match    = re.search(r"(\d+)[eèème]+\s*étage", all_text)
+        surface_match  = re.search(r"(?<!\d)(\d+)\s*m²", details)
+        pieces_match   = re.search(r"(?<!\d)(\d+)\s*[Pp]ièces?", details)
+        chambres_match = re.search(r"(?<!\d)(\d+)\s*[Cc]hambres?", details)
+        sdb_match      = re.search(r"(?<!\d)(\d+)\s*[Ss]alles?\s*de\s*bains?", details)
+        etage_match    = re.search(r"(?<!\d)(\d+)(?:ère|er|ème|e)\s*étage", all_text)
 
         surface     = ld.get("surface") or clean_surface(surface_match.group(1) if surface_match else None)
         nb_pieces   = ld.get("nb_pieces") or clean_int(pieces_match.group(1) if pieces_match else None)

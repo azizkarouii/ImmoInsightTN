@@ -34,6 +34,30 @@ def clean_int(val):
     nums = re.sub(r"[^\d]", "", str(val))
     return int(nums) if nums else None
 
+ENTIER = re.compile(r"\d+")
+NOMBRE_GROUPE = re.compile(r"\d+(?:[.\s]\d+)*")   # "1 160", "2.500"
+NOMBRE_VIRGULE = re.compile(r"\d+(?:,\d+)*")      # "1,2"
+
+
+def nombre_suivi_de(texte, suite, nombre=ENTIER, espaces=True):
+    r"""Premier nombre de `texte` suivi de `suite` (regex compilée, testée par match).
+
+    Remplace re.search(r"(\d+)\s*suite", texte) en temps linéaire : une recherche qui
+    commence par \d+ réessaie chaque position d'une longue suite de chiffres. Ici les
+    nombres sont parcourus une seule fois (finditer) et la suite est ancrée juste après.
+    Retourne (nombre, match de la suite) ou None.
+    """
+    texte = texte or ""
+    for m in nombre.finditer(texte):
+        i = m.end()
+        while espaces and i < len(texte) and texte[i].isspace():
+            i += 1
+        apres = suite.match(texte, i)
+        if apres:
+            return m.group(), apres
+    return None
+
+
 def compute_hash(item: dict) -> str:
     content = f"{item.get('titre','')}{item.get('prix','')}{item.get('surface','')}{item.get('description','')}{item.get('ville','')}{item.get('gouvernorat','')}{item.get('type_bien','')}"
     return hashlib.md5(content.encode("utf-8")).hexdigest()

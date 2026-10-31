@@ -25,7 +25,7 @@ jobs:
           cache-dependency-path: requirements.lock
 
       - name: Dépendances (versions verrouillées, wheels uniquement)
-        run: pip install --only-binary :all: -r requirements.lock
+        run: pip install --require-hashes --only-binary :all: -r requirements.lock
 
       - name: L'API démarre sans base, sans modèles et sans clé
         run: python -c "import api.main; print('api.main importé')"

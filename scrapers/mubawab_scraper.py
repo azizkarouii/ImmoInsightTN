@@ -4,7 +4,7 @@ from urllib.parse import unquote
 
 import scrapy
 from scrapy.crawler import CrawlerProcess
-from .utils import get_db, clean_prix, clean_surface, clean_int, upsert_annonce
+from .utils import get_db, clean_prix, clean_surface, clean_int, upsert_annonce, nombre_suivi_de
 from .middlewares import REGLAGES_LIMITE
 
 GOUVERNORATS = [
@@ -78,6 +78,14 @@ def _type_offre_from_slug(slug: str) -> str:
     if "a-louer" in slug:
         return "location"
     return "vente"
+
+
+# Suites attendues après un nombre dans les caractéristiques (voir utils.nombre_suivi_de)
+_M2 = re.compile("m²")
+_PIECES = re.compile("pièces?", re.IGNORECASE)
+_CHAMBRES = re.compile("chambres?", re.IGNORECASE)
+_SDB = re.compile(r"salles?\s*de\s*bains?", re.IGNORECASE)
+_ETAGE = re.compile(r"(?:ère|er|ème|e)\s*étage")
 
 
 class MubawabSpider(scrapy.Spider):
@@ -197,17 +205,15 @@ class MubawabSpider(scrapy.Spider):
 
         details = " | ".join(" ".join(t.split()) for t in response.css(".adDetailFeature ::text").getall() if t.strip())
 
-        surface_match  = re.search(r"(?<!\d)(\d+)\s*m²", details)
-        pieces_match   = re.search(r"(?<!\d)(\d+)\s*[Pp]ièces?", details)
-        chambres_match = re.search(r"(?<!\d)(\d+)\s*[Cc]hambres?", details)
-        sdb_match      = re.search(r"(?<!\d)(\d+)\s*[Ss]alles?\s*de\s*bains?", details)
-        etage_match    = re.search(r"(?<!\d)(\d+)(?:ère|er|ème|e)\s*étage", all_text)
+        def nombre(texte, suite, espaces=True):
+            trouve = nombre_suivi_de(texte, suite, espaces=espaces)
+            return trouve[0] if trouve else None
 
-        surface     = ld.get("surface") or clean_surface(surface_match.group(1) if surface_match else None)
-        nb_pieces   = ld.get("nb_pieces") or clean_int(pieces_match.group(1) if pieces_match else None)
-        nb_chambres = ld.get("nb_chambres") or clean_int(chambres_match.group(1) if chambres_match else None)
-        nb_sdb      = ld.get("nb_sdb") or clean_int(sdb_match.group(1) if sdb_match else None)
-        etage       = clean_int(etage_match.group(1) if etage_match else None)
+        surface     = ld.get("surface") or clean_surface(nombre(details, _M2))
+        nb_pieces   = ld.get("nb_pieces") or clean_int(nombre(details, _PIECES))
+        nb_chambres = ld.get("nb_chambres") or clean_int(nombre(details, _CHAMBRES))
+        nb_sdb      = ld.get("nb_sdb") or clean_int(nombre(details, _SDB))
+        etage       = clean_int(nombre(all_text, _ETAGE, espaces=False))
 
         # "La Marsa Ville à La Marsa" : quartier à ville
         localisation_raw = " ".join(" ".join(response.css("h3.greyTit ::text").getall()).split())

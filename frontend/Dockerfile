@@ -9,7 +9,9 @@ COPY src ./src
 RUN npm run build -- --configuration production
 
 # 2. Service statique + relais /api vers le conteneur de l'API
-FROM nginx:1.27-alpine
+#    Variante officielle sans privilèges de nginx : utilisateur nginx (uid 101), port 8080
+FROM nginxinc/nginx-unprivileged:1.27-alpine
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist/frontend/browser /usr/share/nginx/html
-EXPOSE 80
+USER nginx
+EXPOSE 8080

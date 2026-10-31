@@ -3,7 +3,7 @@ import asyncio
 import secrets
 from datetime import datetime, timedelta
 from urllib.parse import urljoin
-from .utils import get_db, clean_prix, upsert_annonce
+from .utils import get_db, clean_prix, upsert_annonce, nombre_suivi_de, NOMBRE_GROUPE, NOMBRE_VIRGULE
 
 VILLES = [
     "Djerba", "Hammamet", "Sousse", "Monastir",
@@ -33,6 +33,12 @@ PENSIONS = [
     ("petit-déjeuner compris", "petit_dejeuner"),
 ]
 
+
+# Suites attendues après un nombre (voir utils.nombre_suivi_de)
+_M2 = re.compile("m²")
+_DECIMALE = re.compile(r",\d")
+_AVIS = re.compile("expériences vécues|commentaires|avis")
+_DU_CENTRE = re.compile(r"(?P<unite>km|m)\s+du centre")
 
 # Délais aléatoires entre les pages (rythme de navigation humain)
 _ALEA = secrets.SystemRandom()
@@ -92,24 +98,27 @@ def parse_booking_card(textes):
         type_logement = config.split("•")[0].strip()
     else:
         type_logement = lignes[0] if lignes else None
-    surface = re.search(r"(?<!\d)(\d+(?:[.\s]\d+)*)\s*m²", config)
+    surface = nombre_suivi_de(config, _M2, NOMBRE_GROUPE)
 
     # "5 lits (2 lits simples, ...)" ou "1 grand lit double"
     ligne_lits = next((l for l in lignes if "•" not in l and re.search(r"\blits?\b", l, re.IGNORECASE)), "")
     nb_lits = _compte(r"^(\d+)\s", ligne_lits) if ligne_lits else None
 
     score_txt = textes.get("review-score") or ""
-    score = re.search(r"(?<!\d)(\d+,\d)", score_txt)
-    nb_avis = re.search(r"(?<!\d)(\d+(?:[\s.]\d+)*)\s*(?:expériences vécues|commentaires|avis)", score_txt)
+    score = nombre_suivi_de(score_txt, _DECIMALE, espaces=False)
+    nb_avis = nombre_suivi_de(score_txt, _AVIS, NOMBRE_GROUPE)
 
-    centre = re.search(r"(?<![\d,])([\d,]+)\s*(km|m)\s+du centre", card)
-    plage = re.search(r"À\s*([\d,]+)\s*(km|m)\s+de la plage", card)
+    centre = nombre_suivi_de(card, _DU_CENTRE, NOMBRE_VIRGULE)
+    plage = re.search(r"À\s*([\d,]+)\s*(?P<unite>km|m)\s+de la plage", card)
+    if plage:
+        plage = plage.group(1), plage
 
-    def km(match):
-        if not match:
+    def km(trouve):
+        """(nombre, match dont le groupe « unite » vaut km ou m) -> distance en km."""
+        if not trouve:
             return None
-        valeur = _nombre(match.group(1))
-        return round(valeur / 1000, 3) if match.group(2) == "m" else valeur
+        valeur = _nombre(trouve[0])
+        return round(valeur / 1000, 3) if trouve[1].group("unite") == "m" else valeur
 
     pension = next((code for libelle, code in PENSIONS if libelle in unite.lower()), None)
     # Adresse affichée sur la carte ("Yasmine Hammamet", "Houmt Souk") : plus précise que
@@ -129,11 +138,11 @@ def parse_booking_card(textes):
         "nb_chambres":     _compte(r"(\d+)\s*chambres?", config),
         "nb_salons":       _compte(r"(\d+)\s*salons?", config),
         "nb_sdb":          _compte(r"(\d+)\s*salles? de bains?", config),
-        "surface":         _nombre(surface.group(1)) if surface else None,
+        "surface":         _nombre(surface[0]) if surface else None,
         "nb_lits":         nb_lits,
         "pension":         pension,
-        "score_avis":      _nombre(score.group(1)) if score else None,
-        "nb_avis":         int(_nombre(nb_avis.group(1)) or 0) if nb_avis else None,
+        "score_avis":      _nombre(score[0] + score[1].group()) if score else None,
+        "nb_avis":         int(_nombre(nb_avis[0]) or 0) if nb_avis else None,
         "dist_centre_km":  km(centre),
         "dist_plage_km":   0.0 if front_de_mer else km(plage),
         "front_de_mer":    front_de_mer,

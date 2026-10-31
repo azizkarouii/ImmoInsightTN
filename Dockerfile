@@ -6,6 +6,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONIOENCODING=utf-8 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
     TZ=Africa/Tunis
 
 # libgomp1 : requis par LightGBM / XGBoost
@@ -13,20 +14,27 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends curl libgomp1 tzdata \
     && rm -rf /var/lib/apt/lists/*
 
+# Utilisateur sans privilèges (uid 1000 : en général propriétaire des volumes montés sous Linux)
+RUN useradd --create-home --uid 1000 app \
+    && mkdir -p /app/data /app/logs \
+    && chown -R app:app /app
+
 WORKDIR /app
 
-# Versions verrouillées, wheels uniquement : aucun script setup.py exécuté à l'installation
+# Versions et hashes verrouillés, wheels uniquement : aucun paquet modifié ni script setup.py exécuté
 COPY requirements.lock .
-RUN pip install --only-binary :all: -r requirements.lock \
-    # Chromium pour le scraper Booking (Playwright)
+RUN pip install --require-hashes --only-binary :all: -r requirements.lock \
+    # Chromium pour le scraper Booking (Playwright), dans un dossier lisible par l'utilisateur app
     && python -m playwright install --with-deps chromium \
     && rm -rf /var/lib/apt/lists/*
 
 # Uniquement le code exécuté (modèles entraînés et data/ sont montés en volume)
-COPY api ./api
-COPY etl ./etl
-COPY models ./models
-COPY scrapers ./scrapers
+COPY --chown=app:app api ./api
+COPY --chown=app:app etl ./etl
+COPY --chown=app:app models ./models
+COPY --chown=app:app scrapers ./scrapers
+
+USER app
 
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \

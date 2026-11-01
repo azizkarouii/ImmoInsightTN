@@ -35,7 +35,7 @@ import { IconComponent } from './icon.component';
       <main class="main-content" id="contenu" tabindex="-1">
         <div class="status-strip">
           <span><strong>{{ totalAnnonces !== null ? (totalAnnonces | number) : '—' }}</strong> annonces analysées</span>
-          <button type="button" class="strip-lien" (click)="ouvrir('alertes')" title="Voir les nouvelles annonces"><strong>{{ nouveautes24h ?? '—' }}</strong> nouvelles en 24 h →</button>
+          <button type="button" class="strip-lien" (click)="ouvrir('alertes')" title="Voir les nouvelles annonces"><strong>{{ nouveautes24h ?? '—' }}</strong> {{ nouveautes24h === 1 ? 'nouvelle' : 'nouvelles' }} en 24 h →</button>
           <span><span class="dot" [class.ok]="collecteRecente" [class.warn]="!collecteRecente"></span>
             {{ collecteRecente ? 'À jour' : 'Collecte ancienne' }} · Dernière collecte : <strong>{{ derniereCollecte || 'aucune' }}</strong></span>
           <span *ngIf="prochaineCollecte">Prochaine : <strong>{{ prochaineCollecte }}</strong></span>

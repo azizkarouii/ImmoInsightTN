@@ -18,3 +18,5 @@ notebooks/
 diag.py
 rapport.*
 *.log
+rapport/
+images_rapport/

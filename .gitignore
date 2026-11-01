@@ -105,3 +105,9 @@ tests/__pycache__/
 tests/.coverage
 
 .claude/
+# Captures et figures du rapport (régénérables)
+images_rapport/
+
+# Rapport : seul le PDF final est versionné (sources LaTeX, scripts et compilation ignorés)
+rapport/*
+!rapport/ImmoInsight_TN_rapport.pdf
